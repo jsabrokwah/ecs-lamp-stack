@@ -33,10 +33,10 @@ aws configure
 aws sts get-caller-identity
 
 # Configure ECS CLI
-ecs-cli configure --cluster lamp-cluster --region us-east-1 --default-launch-type FARGATE --config-name lamp-config
+ecs-cli configure --cluster ecs-lamp-cluster --region us-east-1 --default-launch-type FARGATE --config-name ecs-lamp-config
 
 # Create ECS CLI profile
-ecs-cli configure profile --access-key $AWS_ACCESS_KEY_ID --secret-key $AWS_SECRET_ACCESS_KEY --profile-name lamp-profile
+ecs-cli configure profile --access-key $AWS_ACCESS_KEY_ID --secret-key $AWS_SECRET_ACCESS_KEY --profile-name ecs-lamp-profile
 ```
 
 ## Phase 1: IAM Roles and Policies Setup
@@ -117,7 +117,7 @@ VPC_ID=$(aws ec2 create-vpc \
 
 aws ec2 create-tags \
     --resources $VPC_ID \
-    --tags Key=Name,Value=lamp-vpc
+    --tags Key=Name,Value=ecs-lamp-vpc
 
 # Create Internet Gateway
 IGW_ID=$(aws ec2 create-internet-gateway \
@@ -215,7 +215,7 @@ aws ec2 associate-route-table \
 ```bash
 # ALB Security Group
 ALB_SG=$(aws ec2 create-security-group \
-    --group-name lamp-alb-sg \
+    --group-name ecs-lamp-alb-sg \
     --description "Security group for ALB" \
     --vpc-id $VPC_ID \
     --query 'GroupId' \
@@ -235,7 +235,7 @@ aws ec2 authorize-security-group-ingress \
 
 # ECS Security Group
 ECS_SG=$(aws ec2 create-security-group \
-    --group-name lamp-ecs-sg \
+    --group-name ecs-lamp-ecs-sg \
     --description "Security group for ECS tasks" \
     --vpc-id $VPC_ID \
     --query 'GroupId' \
@@ -255,7 +255,7 @@ aws ec2 authorize-security-group-ingress \
 
 # EFS Security Group
 EFS_SG=$(aws ec2 create-security-group \
-    --group-name lamp-efs-sg \
+    --group-name ecs-lamp-efs-sg \
     --description "Security group for EFS" \
     --vpc-id $VPC_ID \
     --query 'GroupId' \
@@ -273,7 +273,7 @@ aws ec2 authorize-security-group-ingress \
 ```bash
 # Create EFS file system
 EFS_ID=$(aws efs create-file-system \
-    --creation-token lamp-mysql-data \
+    --creation-token ecs-lamp-mysql-data \
     --performance-mode generalPurpose \
     --throughput-mode provisioned \
     --provisioned-throughput-in-mibps 100 \
@@ -304,8 +304,8 @@ EFS_ACCESS_POINT=$(aws efs create-access-point \
 
 ```bash
 # Create ECR repositories
-aws ecr create-repository --repository-name lamp-web
-aws ecr create-repository --repository-name lamp-mysql
+aws ecr create-repository --repository-name ecs-lamp-web
+aws ecr create-repository --repository-name ecs-lamp-mysql
 
 # Get login token
 aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com
@@ -316,8 +316,8 @@ aws ecr get-login-password --region us-east-1 | docker login --username AWS --pa
 ### 5.1 Create Application Structure
 
 ```bash
-mkdir -p lamp-app/{web/src,mysql}
-cd lamp-app
+mkdir -p ecs-lamp-app/{web/src,mysql}
+cd ecs-lamp-app
 ```
 
 ### 5.2 Web Application Files
@@ -438,15 +438,15 @@ EOF
 ```bash
 # Build web image
 cd web
-docker build -t lamp-web .
-docker tag lamp-web:latest ${ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/lamp-web:latest
-docker push ${ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/lamp-web:latest
+docker build -t ecs-lamp-web .
+docker tag ecs-lamp-web:latest ${ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/ecs-lamp-web:latest
+docker push ${ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/ecs-lamp-web:latest
 
 # Build MySQL image
 cd ../mysql
-docker build -t lamp-mysql .
-docker tag lamp-mysql:latest ${ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/lamp-mysql:latest
-docker push ${ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/lamp-mysql:latest
+docker build -t ecs-lamp-mysql .
+docker tag ecs-lamp-mysql:latest ${ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/ecs-lamp-mysql:latest
+docker push ${ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/ecs-lamp-mysql:latest
 
 cd ..
 ```
@@ -455,10 +455,10 @@ cd ..
 
 ```bash
 # Create ECS cluster using ECS CLI
-ecs-cli up --cluster-config lamp-config --ecs-profile lamp-profile
+ecs-cli up --cluster-config ecs-lamp-config --ecs-profile ecs-lamp-profile
 
 # Verify cluster creation
-ecs-cli ps --cluster-config lamp-config --ecs-profile lamp-profile
+ecs-cli ps --cluster-config ecs-lamp-config --ecs-profile ecs-lamp-profile
 ```
 
 ## Phase 7: Load Balancer Setup
@@ -466,7 +466,7 @@ ecs-cli ps --cluster-config lamp-config --ecs-profile lamp-profile
 ```bash
 # Create Application Load Balancer
 ALB_ARN=$(aws elbv2 create-load-balancer \
-    --name lamp-alb \
+    --name ecs-lamp-alb \
     --subnets $PUBLIC_SUBNET_1 $PUBLIC_SUBNET_2 \
     --security-groups $ALB_SG \
     --query 'LoadBalancers[0].LoadBalancerArn' \
@@ -474,7 +474,7 @@ ALB_ARN=$(aws elbv2 create-load-balancer \
 
 # Create target group
 TARGET_GROUP_ARN=$(aws elbv2 create-target-group \
-    --name lamp-web-tg \
+    --name ecs-lamp-web-tg \
     --protocol HTTP \
     --port 80 \
     --vpc-id $VPC_ID \
@@ -502,7 +502,7 @@ aws elbv2 create-listener \
 ```bash
 cat > mysql-task-definition.json << EOF
 {
-    "family": "lamp-mysql",
+    "family": "ecs-lamp-mysql",
     "networkMode": "awsvpc",
     "requiresCompatibilities": ["FARGATE"],
     "cpu": "512",
@@ -511,7 +511,7 @@ cat > mysql-task-definition.json << EOF
     "containerDefinitions": [
         {
             "name": "mysql",
-            "image": "${ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/lamp-mysql:latest",
+            "image": "${ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/ecs-lamp-mysql:latest",
             "essential": true,
             "portMappings": [
                 {
@@ -538,7 +538,7 @@ cat > mysql-task-definition.json << EOF
             "logConfiguration": {
                 "logDriver": "awslogs",
                 "options": {
-                    "awslogs-group": "/ecs/lamp-mysql",
+                    "awslogs-group": "/ecs/ecs-lamp-mysql",
                     "awslogs-region": "us-east-1",
                     "awslogs-stream-prefix": "ecs",
                     "awslogs-create-group": "true"
@@ -568,7 +568,7 @@ aws ecs register-task-definition --cli-input-json file://mysql-task-definition.j
 ```bash
 cat > web-task-definition.json << EOF
 {
-    "family": "lamp-web",
+    "family": "ecs-lamp-web",
     "networkMode": "awsvpc",
     "requiresCompatibilities": ["FARGATE"],
     "cpu": "256",
@@ -577,7 +577,7 @@ cat > web-task-definition.json << EOF
     "containerDefinitions": [
         {
             "name": "web",
-            "image": "${ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/lamp-web:latest",
+            "image": "${ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/ecs-lamp-web:latest",
             "essential": true,
             "portMappings": [
                 {
@@ -588,7 +588,7 @@ cat > web-task-definition.json << EOF
             "environment": [
                 {
                     "name": "DB_HOST",
-                    "value": "lamp-mysql.lamp-cluster.local"
+                    "value": "ecs-lamp-mysql.ecs-lamp-cluster.local"
                 },
                 {
                     "name": "DB_NAME",
@@ -613,7 +613,7 @@ cat > web-task-definition.json << EOF
             "logConfiguration": {
                 "logDriver": "awslogs",
                 "options": {
-                    "awslogs-group": "/ecs/lamp-web",
+                    "awslogs-group": "/ecs/ecs-lamp-web",
                     "awslogs-region": "us-east-1",
                     "awslogs-stream-prefix": "ecs",
                     "awslogs-create-group": "true"
@@ -633,7 +633,7 @@ aws ecs register-task-definition --cli-input-json file://web-task-definition.jso
 ```bash
 # Create service discovery namespace
 NAMESPACE_ID=$(aws servicediscovery create-private-dns-namespace \
-    --name lamp-cluster.local \
+    --name ecs-lamp-cluster.local \
     --vpc $VPC_ID \
     --query 'OperationId' \
     --output text)
@@ -644,12 +644,12 @@ sleep 30
 # Get namespace ID
 NAMESPACE_ID=$(aws servicediscovery list-namespaces \
     --filters Name=TYPE,Values=DNS_PRIVATE \
-    --query 'Namespaces[?Name==`lamp-cluster.local`].Id' \
+    --query 'Namespaces[?Name==`ecs-lamp-cluster.local`].Id' \
     --output text)
 
 # Create service discovery service for MySQL
 MYSQL_SERVICE_ID=$(aws servicediscovery create-service \
-    --name lamp-mysql \
+    --name ecs-lamp-mysql \
     --dns-config NamespaceId=${NAMESPACE_ID},DnsRecords=[{Type=A,TTL=300}] \
     --health-check-custom-config FailureThreshold=1 \
     --query 'Service.Id' \
@@ -666,7 +666,7 @@ cat > docker-compose.yml << EOF
 version: '3'
 services:
   mysql:
-    image: ${ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/lamp-mysql:latest
+    image: ${ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/ecs-lamp-mysql:latest
     environment:
       MYSQL_ROOT_PASSWORD: rootpassword
       MYSQL_DATABASE: lampdb
@@ -675,12 +675,12 @@ services:
     logging:
       driver: awslogs
       options:
-        awslogs-group: /ecs/lamp-mysql
+        awslogs-group: /ecs/ecs-lamp-mysql
         awslogs-region: us-east-1
         awslogs-stream-prefix: ecs
         awslogs-create-group: "true"
   web:
-    image: ${ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/lamp-web:latest
+    image: ${ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/ecs-lamp-web:latest
     ports:
       - "80:80"
     environment:
@@ -693,7 +693,7 @@ services:
     logging:
       driver: awslogs
       options:
-        awslogs-group: /ecs/lamp-web
+        awslogs-group: /ecs/ecs-lamp-web
         awslogs-region: us-east-1
         awslogs-stream-prefix: ecs
         awslogs-create-group: "true"
@@ -736,37 +736,37 @@ EOF
 
 ```bash
 # Deploy the application stack
-ecs-cli compose --project-name lamp-stack service up \
+ecs-cli compose --project-name ecs-lamp-stack service up \
     --create-log-groups \
-    --cluster-config lamp-config \
-    --ecs-profile lamp-profile
+    --cluster-config ecs-lamp-config \
+    --ecs-profile ecs-lamp-profile
 
 # Scale the web service
-ecs-cli compose --project-name lamp-stack service scale 2 \
-    --cluster-config lamp-config \
-    --ecs-profile lamp-profile
+ecs-cli compose --project-name ecs-lamp-stack service scale 2 \
+    --cluster-config ecs-lamp-config \
+    --ecs-profile ecs-lamp-profile
 
 # Check service status
-ecs-cli compose --project-name lamp-stack service ps \
-    --cluster-config lamp-config \
-    --ecs-profile lamp-profile
+ecs-cli compose --project-name ecs-lamp-stack service ps \
+    --cluster-config ecs-lamp-config \
+    --ecs-profile ecs-lamp-profile
 ```
 
 ### 10.3 Alternative: Deploy Individual Services
 
 ```bash
 # Deploy MySQL service first
-ecs-cli compose --file docker-compose-mysql.yml --project-name lamp-mysql service up \
-    --cluster-config lamp-config \
-    --ecs-profile lamp-profile
+ecs-cli compose --file docker-compose-mysql.yml --project-name ecs-lamp-mysql service up \
+    --cluster-config ecs-lamp-config \
+    --ecs-profile ecs-lamp-profile
 
 # Wait and then deploy web service
-ecs-cli compose --file docker-compose-web.yml --project-name lamp-web service up \
+ecs-cli compose --file docker-compose-web.yml --project-name ecs-lamp-web service up \
     --target-group-arn $TARGET_GROUP_ARN \
     --container-name web \
     --container-port 80 \
-    --cluster-config lamp-config \
-    --ecs-profile lamp-profile
+    --cluster-config ecs-lamp-config \
+    --ecs-profile ecs-lamp-profile
 ```
 
 ## Phase 11: Verification and Testing
@@ -775,18 +775,18 @@ ecs-cli compose --file docker-compose-web.yml --project-name lamp-web service up
 
 ```bash
 # Check cluster status using ECS CLI
-ecs-cli ps --cluster-config lamp-config --ecs-profile lamp-profile
+ecs-cli ps --cluster-config ecs-lamp-config --ecs-profile ecs-lamp-profile
 
 # Check service status
-ecs-cli compose --project-name lamp-stack service ps \
-    --cluster-config lamp-config \
-    --ecs-profile lamp-profile
+ecs-cli compose --project-name ecs-lamp-stack service ps \
+    --cluster-config ecs-lamp-config \
+    --ecs-profile ecs-lamp-profile
 
 # Get detailed service information using AWS CLI
-aws ecs describe-services --cluster lamp-cluster --services lamp-stack
+aws ecs describe-services --cluster ecs-lamp-cluster --services ecs-lamp-stack
 
 # List tasks
-aws ecs list-tasks --cluster lamp-cluster
+aws ecs list-tasks --cluster ecs-lamp-cluster
 
 # Get ALB DNS name
 ALB_DNS=$(aws elbv2 describe-load-balancers \
@@ -821,7 +821,7 @@ cat > dashboard.json << EOF
             "type": "metric",
             "properties": {
                 "metrics": [
-                    ["AWS/ECS", "CPUUtilization", "ServiceName", "lamp-web-service", "ClusterName", "lamp-cluster"],
+                    ["AWS/ECS", "CPUUtilization", "ServiceName", "ecs-lamp-web-service", "ClusterName", "ecs-lamp-cluster"],
                     [".", "MemoryUtilization", ".", ".", ".", "."]
                 ],
                 "period": 300,
@@ -835,7 +835,7 @@ cat > dashboard.json << EOF
 EOF
 
 aws cloudwatch put-dashboard \
-    --dashboard-name "LAMP-ECS-Dashboard" \
+    --dashboard-name "ecs-LAMP-ECS-Dashboard" \
     --dashboard-body file://dashboard.json
 ```
 
@@ -843,17 +843,17 @@ aws cloudwatch put-dashboard \
 
 ```bash
 # Scale down services using ECS CLI
-ecs-cli compose --project-name lamp-stack service scale 0 \
-    --cluster-config lamp-config \
-    --ecs-profile lamp-profile
+ecs-cli compose --project-name ecs-lamp-stack service scale 0 \
+    --cluster-config ecs-lamp-config \
+    --ecs-profile ecs-lamp-profile
 
 # Delete services using ECS CLI
-ecs-cli compose --project-name lamp-stack service down \
-    --cluster-config lamp-config \
-    --ecs-profile lamp-profile
+ecs-cli compose --project-name ecs-lamp-stack service down \
+    --cluster-config ecs-lamp-config \
+    --ecs-profile ecs-lamp-profile
 
 # Delete cluster using ECS CLI
-ecs-cli down --cluster-config lamp-config --ecs-profile lamp-profile
+ecs-cli down --cluster-config ecs-lamp-config --ecs-profile ecs-lamp-profile
 
 # Delete load balancer
 aws elbv2 delete-load-balancer --load-balancer-arn $ALB_ARN
@@ -881,28 +881,28 @@ aws ec2 delete-vpc --vpc-id $VPC_ID
 
 ```bash
 # Check service status using ECS CLI
-ecs-cli compose --project-name lamp-stack service ps \
-    --cluster-config lamp-config \
-    --ecs-profile lamp-profile
+ecs-cli compose --project-name ecs-lamp-stack service ps \
+    --cluster-config ecs-lamp-config \
+    --ecs-profile ecs-lamp-profile
 
 # View service logs using ECS CLI
-ecs-cli logs --task-id $(ecs-cli ps --cluster-config lamp-config --ecs-profile lamp-profile --quiet | head -1) \
-    --cluster-config lamp-config \
-    --ecs-profile lamp-profile
+ecs-cli logs --task-id $(ecs-cli ps --cluster-config ecs-lamp-config --ecs-profile ecs-lamp-profile --quiet | head -1) \
+    --cluster-config ecs-lamp-config \
+    --ecs-profile ecs-lamp-profile
 
 # Check task logs using AWS CLI
 aws logs describe-log-groups --log-group-name-prefix "/ecs/lamp"
 
 # Get task definition details
-aws ecs describe-task-definition --task-definition lamp-stack
+aws ecs describe-task-definition --task-definition ecs-lamp-stack
 
 # Check service events
-aws ecs describe-services --cluster lamp-cluster --services lamp-stack --query 'services[0].events'
+aws ecs describe-services --cluster ecs-lamp-cluster --services ecs-lamp-stack --query 'services[0].events'
 
 # View container logs
 aws logs get-log-events \
-    --log-group-name "/ecs/lamp-web" \
-    --log-stream-name "ecs/web/$(aws ecs list-tasks --cluster lamp-cluster --query 'taskArns[0]' --output text | cut -d'/' -f3)"
+    --log-group-name "/ecs/ecs-lamp-web" \
+    --log-stream-name "ecs/web/$(aws ecs list-tasks --cluster ecs-lamp-cluster --query 'taskArns[0]' --output text | cut -d'/' -f3)"
 ```
 
 ## Success Verification Checklist
