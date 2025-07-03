@@ -1,0 +1,25 @@
+services:
+  mysql:
+    build: ./mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: lampdb
+    volumes:
+      - mysql-data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+
+  web:
+    build: ./web
+    ports:
+      - "8000:80"
+    environment:
+      DB_HOST: mysql
+      DB_NAME: lampdb
+      DB_USER: root
+      DB_PASSWORD: rootpassword
+    depends_on:
+      - mysql
+
+volumes:
+  mysql-data:
