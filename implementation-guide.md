@@ -23,14 +23,14 @@ sudo usermod -aG docker $USER
 ```bash
 # Configure AWS credentials
 aws configure
-# Enter your Access Key ID, Secret Access Key, Region (us-east-1), and output format (json)
+# Enter your Access Key ID, Secret Access Key, Region (eu-west-1), and output format (json)
 
 # Verify configuration
 aws sts get-caller-identity
 
 # Set environment variables for cluster configuration
 export CLUSTER_NAME=ecs-lamp-cluster
-export AWS_DEFAULT_REGION=us-east-1
+export AWS_DEFAULT_REGION=eu-west-1
 ```
 
 ## Phase 1: IAM Roles and Policies Setup
@@ -56,12 +56,12 @@ EOF
 
 # Create the role
 aws iam create-role \
-    --role-name ecsTaskExecutionRole \
+    --role-name ecsLampTaskExecutionRole \
     --assume-role-policy-document file://ecs-task-trust-policy.json
 
 # Attach AWS managed policy
 aws iam attach-role-policy \
-    --role-name ecsTaskExecutionRole \
+    --role-name ecsLampTaskExecutionRole \
     --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
 
 # Create custom policy for ECR and CloudWatch
@@ -94,7 +94,7 @@ aws iam create-policy \
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 
 aws iam attach-role-policy \
-    --role-name ecsTaskExecutionRole \
+    --role-name ecsLampTaskExecutionRole \
     --policy-arn arn:aws:iam::${ACCOUNT_ID}:policy/ECSCustomPolicy
 ```
 
@@ -126,14 +126,14 @@ aws ec2 attach-internet-gateway \
 PUBLIC_SUBNET_1=$(aws ec2 create-subnet \
     --vpc-id $VPC_ID \
     --cidr-block 10.0.1.0/24 \
-    --availability-zone us-east-1a \
+    --availability-zone eu-west-1a \
     --query 'Subnet.SubnetId' \
     --output text)
 
 PUBLIC_SUBNET_2=$(aws ec2 create-subnet \
     --vpc-id $VPC_ID \
     --cidr-block 10.0.2.0/24 \
-    --availability-zone us-east-1b \
+    --availability-zone eu-west-1b \
     --query 'Subnet.SubnetId' \
     --output text)
 
@@ -141,14 +141,14 @@ PUBLIC_SUBNET_2=$(aws ec2 create-subnet \
 PRIVATE_SUBNET_1=$(aws ec2 create-subnet \
     --vpc-id $VPC_ID \
     --cidr-block 10.0.3.0/24 \
-    --availability-zone us-east-1a \
+    --availability-zone eu-west-1a \
     --query 'Subnet.SubnetId' \
     --output text)
 
 PRIVATE_SUBNET_2=$(aws ec2 create-subnet \
     --vpc-id $VPC_ID \
     --cidr-block 10.0.4.0/24 \
-    --availability-zone us-east-1b \
+    --availability-zone eu-west-1b \
     --query 'Subnet.SubnetId' \
     --output text)
 
@@ -302,7 +302,7 @@ aws ecr create-repository --repository-name ecs-lamp-web
 aws ecr create-repository --repository-name ecs-lamp-mysql
 
 # Get login token
-aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com
+aws ecr get-login-password --region eu-west-1 | docker login --username AWS --password-stdin ${ACCOUNT_ID}.dkr.ecr.eu-west-1.amazonaws.com
 ```
 
 ## Phase 5: Application Development
@@ -433,14 +433,14 @@ EOF
 # Build web image
 cd web
 docker build -t ecs-lamp-web .
-docker tag ecs-lamp-web:latest ${ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/ecs-lamp-web:latest
-docker push ${ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/ecs-lamp-web:latest
+docker tag ecs-lamp-web:latest ${ACCOUNT_ID}.dkr.ecr.eu-west-1.amazonaws.com/ecs-lamp-web:latest
+docker push ${ACCOUNT_ID}.dkr.ecr.eu-west-1.amazonaws.com/ecs-lamp-web:latest
 
 # Build MySQL image
 cd ../mysql
 docker build -t ecs-lamp-mysql .
-docker tag ecs-lamp-mysql:latest ${ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/ecs-lamp-mysql:latest
-docker push ${ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/ecs-lamp-mysql:latest
+docker tag ecs-lamp-mysql:latest ${ACCOUNT_ID}.dkr.ecr.eu-west-1.amazonaws.com/ecs-lamp-mysql:latest
+docker push ${ACCOUNT_ID}.dkr.ecr.eu-west-1.amazonaws.com/ecs-lamp-mysql:latest
 
 cd ..
 ```
@@ -505,7 +505,7 @@ cat > mysql-task-definition.json << EOF
     "containerDefinitions": [
         {
             "name": "mysql",
-            "image": "${ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/ecs-lamp-mysql:latest",
+            "image": "${ACCOUNT_ID}.dkr.ecr.eu-west-1.amazonaws.com/ecs-lamp-mysql:latest",
             "essential": true,
             "portMappings": [
                 {
@@ -533,7 +533,7 @@ cat > mysql-task-definition.json << EOF
                 "logDriver": "awslogs",
                 "options": {
                     "awslogs-group": "/ecs/ecs-lamp-mysql",
-                    "awslogs-region": "us-east-1",
+                    "awslogs-region": "eu-west-1",
                     "awslogs-stream-prefix": "ecs",
                     "awslogs-create-group": "true"
                 }
@@ -545,8 +545,10 @@ cat > mysql-task-definition.json << EOF
             "name": "mysql-data",
             "efsVolumeConfiguration": {
                 "fileSystemId": "${EFS_ID}",
-                "accessPointId": "${EFS_ACCESS_POINT}",
-                "transitEncryption": "ENABLED"
+                "transitEncryption": "ENABLED",
+                "authorizationConfig": {
+                    "accessPointId": "${EFS_ACCESS_POINT}"
+                }
             }
         }
     ]
@@ -571,7 +573,7 @@ cat > web-task-definition.json << EOF
     "containerDefinitions": [
         {
             "name": "web",
-            "image": "${ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/ecs-lamp-web:latest",
+            "image": "${ACCOUNT_ID}.dkr.ecr.eu-west-1.amazonaws.com/ecs-lamp-web:latest",
             "essential": true,
             "portMappings": [
                 {
@@ -608,7 +610,7 @@ cat > web-task-definition.json << EOF
                 "logDriver": "awslogs",
                 "options": {
                     "awslogs-group": "/ecs/ecs-lamp-web",
-                    "awslogs-region": "us-east-1",
+                    "awslogs-region": "eu-west-1",
                     "awslogs-stream-prefix": "ecs",
                     "awslogs-create-group": "true"
                 }
@@ -644,7 +646,7 @@ NAMESPACE_ID=$(aws servicediscovery list-namespaces \
 # Create service discovery service for MySQL
 MYSQL_SERVICE_ID=$(aws servicediscovery create-service \
     --name ecs-lamp-mysql \
-    --dns-config NamespaceId=${NAMESPACE_ID},DnsRecords=[{Type=A,TTL=300}] \
+    --dns-config "NamespaceId=${NAMESPACE_ID},DnsRecords=[{Type=A,TTL=300}]" \
     --health-check-custom-config FailureThreshold=1 \
     --query 'Service.Id' \
     --output text)
@@ -663,7 +665,7 @@ aws ecs create-service \
     --desired-count 1 \
     --launch-type FARGATE \
     --network-configuration "awsvpcConfiguration={subnets=[$PRIVATE_SUBNET_1,$PRIVATE_SUBNET_2],securityGroups=[$ECS_SG],assignPublicIp=DISABLED}" \
-    --service-registries "registryArn=arn:aws:servicediscovery:us-east-1:${ACCOUNT_ID}:service/${MYSQL_SERVICE_ID}"
+    --service-registries "registryArn=arn:aws:servicediscovery:eu-west-1:${ACCOUNT_ID}:service/${MYSQL_SERVICE_ID}"
 
 # Wait for MySQL service to be stable
 aws ecs wait services-stable --cluster $CLUSTER_NAME --services ecs-lamp-mysql-service
@@ -754,7 +756,7 @@ cat > dashboard.json << EOF
                 ],
                 "period": 300,
                 "stat": "Average",
-                "region": "us-east-1",
+                "region": "eu-west-1",
                 "title": "ECS Service Metrics"
             }
         }

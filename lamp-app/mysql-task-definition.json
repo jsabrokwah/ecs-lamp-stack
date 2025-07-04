@@ -1,0 +1,55 @@
+{
+    "family": "ecs-lamp-mysql",
+    "networkMode": "awsvpc",
+    "requiresCompatibilities": ["FARGATE"],
+    "cpu": "512",
+    "memory": "1024",
+    "executionRoleArn": "arn:aws:iam::288761743948:role/ecsTaskExecutionRole",
+    "containerDefinitions": [
+        {
+            "name": "mysql",
+            "image": "288761743948.dkr.ecr.eu-west-1.amazonaws.com/ecs-lamp-mysql:latest",
+            "essential": true,
+            "portMappings": [
+                {
+                    "containerPort": 3306,
+                    "protocol": "tcp"
+                }
+            ],
+            "environment": [
+                {
+                    "name": "MYSQL_ROOT_PASSWORD",
+                    "value": "rootpassword"
+                },
+                {
+                    "name": "MYSQL_DATABASE",
+                    "value": "lampdb"
+                }
+            ],
+            "mountPoints": [
+                {
+                    "sourceVolume": "mysql-data",
+                    "containerPath": "/var/lib/mysql"
+                }
+            ],
+            "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                    "awslogs-group": "/ecs/ecs-lamp-mysql",
+                    "awslogs-region": "eu-west-1",
+                    "awslogs-stream-prefix": "ecs",
+                    "awslogs-create-group": "true"
+                }
+            }
+        }
+    ],
+    "volumes": [
+        {
+            "name": "mysql-data",
+            "efsVolumeConfiguration": {
+                "fileSystemId": "fs-0c2f815e7eadecb29",
+                "transitEncryption": "ENABLED"
+            }
+        }
+    ]
+}
