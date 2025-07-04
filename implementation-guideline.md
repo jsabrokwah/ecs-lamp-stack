@@ -1179,7 +1179,7 @@ aws ecs create-service \
     --cluster $CLUSTER_NAME \
     --service-name ecs-lamp-mysql-service \
     --task-definition ecs-lamp-mysql:1 \
-    --desired-count 1 \
+    --desired-count 2 \
     --launch-type FARGATE \
     --network-configuration "awsvpcConfiguration={subnets=[$PRIVATE_SUBNET_1,$PRIVATE_SUBNET_2],securityGroups=[$ECS_SG],assignPublicIp=DISABLED}" \
     --service-registries "registryArn=arn:aws:servicediscovery:eu-west-1:${ACCOUNT_ID}:service/${MYSQL_SERVICE_ID}"
