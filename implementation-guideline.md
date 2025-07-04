@@ -1,26 +1,17 @@
-# LAMP Application ECS Deployment Implementation Guide
+# LAMP Application ECS Deployment Implementation Guideline
 
-## Prerequisites Setup
+## Phase 1: Environment Setup & Prerequisites
 
-### 1. Install Required Tools
+### 1.1 AWS Account Configuration
+**Plan**: Verify AWS account access and billing setup, configure AWS CLI with appropriate credentials, set up AWS regions
 
+**Implementation**:
 ```bash
 # Install AWS CLI v2
 curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
 unzip awscliv2.zip
 sudo ./aws/install
 
-# Install Docker
-sudo apt update
-sudo apt install docker.io -y
-sudo systemctl start docker
-sudo systemctl enable docker
-sudo usermod -aG docker $USER
-```
-
-### 2. Configure AWS CLI
-
-```bash
 # Configure AWS credentials
 aws configure
 # Enter your Access Key ID, Secret Access Key, Region (eu-west-1), and output format (json)
@@ -33,10 +24,10 @@ export CLUSTER_NAME=ecs-lamp-cluster
 export AWS_DEFAULT_REGION=<your-aws-region>
 ```
 
-## Phase 1: IAM Roles and Policies Setup
+### 1.2 IAM Role & Policy Setup
+**Plan**: Create ECS Task Execution Role, create ECS Service Role, attach policies: `AmazonECSTaskExecutionRolePolicy`, `AmazonECSServiceRolePolicy`, create custom policies for ECR, CloudWatch, and S3 access
 
-### 1.1 Create ECS Task Execution Role
-
+**Implementation**:
 ```bash
 # Create trust policy for ECS tasks
 cat > ecs-task-trust-policy.json << EOF
@@ -98,224 +89,53 @@ aws iam attach-role-policy \
     --policy-arn arn:aws:iam::${ACCOUNT_ID}:policy/ECSCustomPolicy
 ```
 
-## Phase 2: VPC and Networking Setup
+### 1.3 Development Environment
+**Plan**: Install Docker locally, set up local development environment, install required tools: git, text editor, AWS CLI v2
 
-### 2.1 Create VPC Infrastructure
-
+**Implementation**:
 ```bash
-# Create VPC
-VPC_ID=$(aws ec2 create-vpc \
-    --cidr-block 10.0.0.0/16 \
-    --query 'Vpc.VpcId' \
-    --output text)
-
-aws ec2 create-tags \
-    --resources $VPC_ID \
-    --tags Key=Name,Value=ecs-lamp-vpc
-
-# Create Internet Gateway
-IGW_ID=$(aws ec2 create-internet-gateway \
-    --query 'InternetGateway.InternetGatewayId' \
-    --output text)
-
-aws ec2 attach-internet-gateway \
-    --vpc-id $VPC_ID \
-    --internet-gateway-id $IGW_ID
-
-# Create public subnets
-PUBLIC_SUBNET_1=$(aws ec2 create-subnet \
-    --vpc-id $VPC_ID \
-    --cidr-block 10.0.1.0/24 \
-    --availability-zone eu-west-1a \
-    --query 'Subnet.SubnetId' \
-    --output text)
-
-PUBLIC_SUBNET_2=$(aws ec2 create-subnet \
-    --vpc-id $VPC_ID \
-    --cidr-block 10.0.2.0/24 \
-    --availability-zone eu-west-1b \
-    --query 'Subnet.SubnetId' \
-    --output text)
-
-# Create private subnets
-PRIVATE_SUBNET_1=$(aws ec2 create-subnet \
-    --vpc-id $VPC_ID \
-    --cidr-block 10.0.3.0/24 \
-    --availability-zone eu-west-1a \
-    --query 'Subnet.SubnetId' \
-    --output text)
-
-PRIVATE_SUBNET_2=$(aws ec2 create-subnet \
-    --vpc-id $VPC_ID \
-    --cidr-block 10.0.4.0/24 \
-    --availability-zone eu-west-1b \
-    --query 'Subnet.SubnetId' \
-    --output text)
-
-# Create NAT Gateway
-NAT_ALLOCATION_ID=$(aws ec2 allocate-address \
-    --domain vpc \
-    --query 'AllocationId' \
-    --output text)
-
-NAT_GATEWAY_ID=$(aws ec2 create-nat-gateway \
-    --subnet-id $PUBLIC_SUBNET_1 \
-    --allocation-id $NAT_ALLOCATION_ID \
-    --query 'NatGateway.NatGatewayId' \
-    --output text)
-
-# Create route tables
-PUBLIC_RT=$(aws ec2 create-route-table \
-    --vpc-id $VPC_ID \
-    --query 'RouteTable.RouteTableId' \
-    --output text)
-
-PRIVATE_RT=$(aws ec2 create-route-table \
-    --vpc-id $VPC_ID \
-    --query 'RouteTable.RouteTableId' \
-    --output text)
-
-# Create routes
-aws ec2 create-route \
-    --route-table-id $PUBLIC_RT \
-    --destination-cidr-block 0.0.0.0/0 \
-    --gateway-id $IGW_ID
-
-aws ec2 create-route \
-    --route-table-id $PRIVATE_RT \
-    --destination-cidr-block 0.0.0.0/0 \
-    --nat-gateway-id $NAT_GATEWAY_ID
-
-# Associate subnets with route tables
-aws ec2 associate-route-table \
-    --subnet-id $PUBLIC_SUBNET_1 \
-    --route-table-id $PUBLIC_RT
-
-aws ec2 associate-route-table \
-    --subnet-id $PUBLIC_SUBNET_2 \
-    --route-table-id $PUBLIC_RT
-
-aws ec2 associate-route-table \
-    --subnet-id $PRIVATE_SUBNET_1 \
-    --route-table-id $PRIVATE_RT
-
-aws ec2 associate-route-table \
-    --subnet-id $PRIVATE_SUBNET_2 \
-    --route-table-id $PRIVATE_RT
+# Install Docker
+sudo apt update
+sudo apt install docker.io -y
+sudo systemctl start docker
+sudo systemctl enable docker
+sudo usermod -aG docker $USER
 ```
 
-### 2.2 Create Security Groups
+## Phase 2: Application Development & Containerization
 
-```bash
-# ALB Security Group
-ALB_SG=$(aws ec2 create-security-group \
-    --group-name ecs-lamp-alb-sg \
-    --description "Security group for ALB" \
-    --vpc-id $VPC_ID \
-    --query 'GroupId' \
-    --output text)
+### 2.1 LAMP Application Structure
+**Plan**: Create application structure with web/ and mysql/ directories, including Dockerfiles and configuration files
 
-aws ec2 authorize-security-group-ingress \
-    --group-id $ALB_SG \
-    --protocol tcp \
-    --port 80 \
-    --cidr 0.0.0.0/0
-
-aws ec2 authorize-security-group-ingress \
-    --group-id $ALB_SG \
-    --protocol tcp \
-    --port 443 \
-    --cidr 0.0.0.0/0
-
-# ECS Security Group
-ECS_SG=$(aws ec2 create-security-group \
-    --group-name ecs-lamp-ecs-sg \
-    --description "Security group for ECS tasks" \
-    --vpc-id $VPC_ID \
-    --query 'GroupId' \
-    --output text)
-
-aws ec2 authorize-security-group-ingress \
-    --group-id $ECS_SG \
-    --protocol tcp \
-    --port 80 \
-    --source-group $ALB_SG
-
-aws ec2 authorize-security-group-ingress \
-    --group-id $ECS_SG \
-    --protocol tcp \
-    --port 3306 \
-    --source-group $ECS_SG
-
-# EFS Security Group
-EFS_SG=$(aws ec2 create-security-group \
-    --group-name ecs-lamp-efs-sg \
-    --description "Security group for EFS" \
-    --vpc-id $VPC_ID \
-    --query 'GroupId' \
-    --output text)
-
-aws ec2 authorize-security-group-ingress \
-    --group-id $EFS_SG \
-    --protocol tcp \
-    --port 2049 \
-    --source-group $ECS_SG
+```
+lamp-app/
+├── web/
+│   ├── Dockerfile
+│   ├── apache2.conf
+│   ├── php.ini
+│   └── src/
+│       ├── index.php
+│       ├── config.php
+│       └── database.php
+├── mysql/
+│   ├── Dockerfile
+│   ├── init.sql
+│   └── mysql.conf
+└── docker-compose.yml (for local testing)
 ```
 
-## Phase 3: EFS Setup for MySQL Persistence
-
-```bash
-# Create EFS file system
-EFS_ID=$(aws efs create-file-system \
-    --creation-token ecs-lamp-mysql-data \
-    --performance-mode generalPurpose \
-    --throughput-mode provisioned \
-    --provisioned-throughput-in-mibps 100 \
-    --query 'FileSystemId' \
-    --output text)
-
-# Create mount targets
-aws efs create-mount-target \
-    --file-system-id $EFS_ID \
-    --subnet-id $PRIVATE_SUBNET_1 \
-    --security-groups $EFS_SG
-
-aws efs create-mount-target \
-    --file-system-id $EFS_ID \
-    --subnet-id $PRIVATE_SUBNET_2 \
-    --security-groups $EFS_SG
-
-# Create access point for MySQL
-EFS_ACCESS_POINT=$(aws efs create-access-point \
-    --file-system-id $EFS_ID \
-    --posix-user Uid=999,Gid=999 \
-    --root-directory Path="/mysql-data",CreationInfo='{OwnerUid=999,OwnerGid=999,Permissions=755}' \
-    --query 'AccessPointId' \
-    --output text)
-```
-
-## Phase 4: ECR Repository Setup
-
-```bash
-# Create ECR repositories
-aws ecr create-repository --repository-name ecs-lamp-web
-aws ecr create-repository --repository-name ecs-lamp-mysql
-
-# Get login token
-aws ecr get-login-password --region eu-west-1 | docker login --username AWS --password-stdin ${ACCOUNT_ID}.dkr.ecr.eu-west-1.amazonaws.com
-```
-
-## Phase 5: Application Development
-
-### 5.1 Create Application Structure
-
+**Implementation**:
 ```bash
 mkdir -p lamp-app/{web/src,mysql}
 cd lamp-app
 ```
 
-### 5.2 Web Application Files
+### 2.2 Container Development Tasks
+**Plan**: Create PHP application with database connectivity, build single web container with Apache + PHP, configure MySQL container with initialization scripts, create optimized Dockerfiles for both containers
 
+**Implementation**:
+
+#### Web Container Files:
 ```bash
 # Create web Dockerfile
 cat > web/Dockerfile << 'EOF'
@@ -394,8 +214,48 @@ error_reporting = E_ALL
 log_errors = On
 error_log = /var/log/php_errors.log
 EOF
+```
 
-# Create PHP application
+### 2.3 Application Features Implementation
+**Plan**: Simple web interface (PHP frontend), database connection testing page, CRUD operations, health check endpoints, error handling and logging
+
+**Implementation**:
+```bash
+# Create PHP application files
+cat > web/src/config.php << 'EOF'
+<?php
+    $host = getenv('DB_HOST') ?: 'localhost';
+    $dbname = getenv('DB_NAME') ?: '<you-db-name>';
+    $username = getenv('DB_USER') ?: 'root';
+    $password = getenv('DB_PASSWORD') ?: '<your-db-password>';
+    
+    $dsn = "mysql:host=$host;dbname=$dbname;charset=utf8mb4";
+EOF
+
+cat > web/src/health.php << 'EOF'
+<?php
+http_response_code(200);
+echo json_encode(['status' => 'healthy', 'timestamp' => time()]);
+?>
+EOF
+
+cat > web/src/database.php << 'EOF'
+<?php
+function getDatabaseConnection() {
+    require 'config.php';
+    
+    try {
+        $pdo = new PDO($dsn, $username, $password);
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        return $pdo;
+    } catch (PDOException $e) {
+        throw $e;
+    }
+}
+?>
+EOF
+
+# Create main application (index.php with full CRUD functionality)
 cat > web/src/index.php << 'EOF'
 <?php
 require_once 'config.php';
@@ -439,6 +299,7 @@ $todo_items = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <title>TaskFlow - Modern Todo App</title>
 <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 <style>
+    /* Modern CSS styling for the application */
     :root {
         --primary: #667eea;
         --primary-dark: #5a67d8;
@@ -485,17 +346,6 @@ $todo_items = $stmt->fetchAll(PDO::FETCH_ASSOC);
         padding: 3rem 2rem;
         text-align: center;
         position: relative;
-    }
-
-    .header::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><pattern id="grain" width="100" height="100" patternUnits="userSpaceOnUse"><circle cx="50" cy="50" r="1" fill="%23ffffff" opacity="0.1"/></pattern></defs><rect width="100" height="100" fill="url(%23grain)"/></svg>') repeat;
-        opacity: 0.3;
     }
 
     .header h1 {
@@ -857,43 +707,7 @@ $todo_items = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <?
 EOF
 
-cat > web/src/config.php << 'EOF'
-<?php
-    $host = getenv('DB_HOST') ?: 'localhost';
-    $dbname = getenv('DB_NAME') ?: '<you-db-name>';
-    $username = getenv('DB_USER') ?: 'root';
-    $password = getenv('DB_PASSWORD') ?: '<your-db-password>';
-    
-    $dsn = "mysql:host=$host;dbname=$dbname;charset=utf8mb4";
-EOF
-
-cat > web/src/health.php << 'EOF'
-<?php
-http_response_code(200);
-echo json_encode(['status' => 'healthy', 'timestamp' => time()]);
-?>
-EOF
-
-cat > web/src/database.php << 'EOF'
-<?php
-function getDatabaseConnection() {
-    require 'config.php';
-    
-    try {
-        $pdo = new PDO($dsn, $username, $password);
-        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-        return $pdo;
-    } catch (PDOException $e) {
-        throw $e;
-    }
-}
-?>
-EOF
-```
-
-### 5.3 MySQL Container Files
-
-```bash
+# Create MySQL container files
 cat > mysql/Dockerfile << 'EOF'
 FROM mysql:8.0
 
@@ -921,7 +735,6 @@ CREATE TABLE IF NOT EXISTS todo (
 );
 EOF
 
-# Create MySQL configuration file
 cat > mysql/mysql.conf << 'EOF'
 [mysqld]
 sql_mode=STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION
@@ -929,36 +742,220 @@ max_connections=200
 EOF
 ```
 
-### 5.4 Build and Push Images
+## Phase 3: AWS Infrastructure Setup
 
+### 3.1 Amazon ECR (Elastic Container Registry)
+**Plan**: Create ECR repositories for each container: `lamp-web` (Apache + PHP), `lamp-mysql`, configure repository policies, set up image lifecycle policies
+
+**Implementation**:
 ```bash
-# Build web image
-cd web
-docker build -t ecs-lamp-web .
-docker tag ecs-lamp-web:latest ${ACCOUNT_ID}.dkr.ecr.eu-west-1.amazonaws.com/ecs-lamp-web:latest
-docker push ${ACCOUNT_ID}.dkr.ecr.eu-west-1.amazonaws.com/ecs-lamp-web:latest
+# Create ECR repositories
+aws ecr create-repository --repository-name ecs-lamp-web
+aws ecr create-repository --repository-name ecs-lamp-mysql
 
-# Build MySQL image
-cd ../mysql
-docker build -t ecs-lamp-mysql .
-docker tag ecs-lamp-mysql:latest ${ACCOUNT_ID}.dkr.ecr.eu-west-1.amazonaws.com/ecs-lamp-mysql:latest
-docker push ${ACCOUNT_ID}.dkr.ecr.eu-west-1.amazonaws.com/ecs-lamp-mysql:latest
-
-cd ../../
+# Get login token
+aws ecr get-login-password --region eu-west-1 | docker login --username AWS --password-stdin ${ACCOUNT_ID}.dkr.ecr.eu-west-1.amazonaws.com
 ```
 
-## Phase 6: ECS Cluster Setup
+### 3.2 VPC and Networking
+**Plan**: Create VPC with public and private subnets, set up Internet Gateway and NAT Gateway, configure Route Tables, configure Security Groups
 
+**Implementation**:
 ```bash
-# Create ECS cluster using AWS CLI
-aws ecs create-cluster --cluster-name $CLUSTER_NAME
+# Create VPC
+VPC_ID=$(aws ec2 create-vpc \
+    --cidr-block 10.0.0.0/16 \
+    --query 'Vpc.VpcId' \
+    --output text)
 
-# Verify cluster creation
-aws ecs describe-clusters --clusters $CLUSTER_NAME
+aws ec2 create-tags \
+    --resources $VPC_ID \
+    --tags Key=Name,Value=ecs-lamp-vpc
+
+# Create Internet Gateway
+IGW_ID=$(aws ec2 create-internet-gateway \
+    --query 'InternetGateway.InternetGatewayId' \
+    --output text)
+
+aws ec2 attach-internet-gateway \
+    --vpc-id $VPC_ID \
+    --internet-gateway-id $IGW_ID
+
+# Create public subnets
+PUBLIC_SUBNET_1=$(aws ec2 create-subnet \
+    --vpc-id $VPC_ID \
+    --cidr-block 10.0.1.0/24 \
+    --availability-zone eu-west-1a \
+    --query 'Subnet.SubnetId' \
+    --output text)
+
+PUBLIC_SUBNET_2=$(aws ec2 create-subnet \
+    --vpc-id $VPC_ID \
+    --cidr-block 10.0.2.0/24 \
+    --availability-zone eu-west-1b \
+    --query 'Subnet.SubnetId' \
+    --output text)
+
+# Create private subnets
+PRIVATE_SUBNET_1=$(aws ec2 create-subnet \
+    --vpc-id $VPC_ID \
+    --cidr-block 10.0.3.0/24 \
+    --availability-zone eu-west-1a \
+    --query 'Subnet.SubnetId' \
+    --output text)
+
+PRIVATE_SUBNET_2=$(aws ec2 create-subnet \
+    --vpc-id $VPC_ID \
+    --cidr-block 10.0.4.0/24 \
+    --availability-zone eu-west-1b \
+    --query 'Subnet.SubnetId' \
+    --output text)
+
+# Create NAT Gateway
+NAT_ALLOCATION_ID=$(aws ec2 allocate-address \
+    --domain vpc \
+    --query 'AllocationId' \
+    --output text)
+
+NAT_GATEWAY_ID=$(aws ec2 create-nat-gateway \
+    --subnet-id $PUBLIC_SUBNET_1 \
+    --allocation-id $NAT_ALLOCATION_ID \
+    --query 'NatGateway.NatGatewayId' \
+    --output text)
+
+# Create route tables
+PUBLIC_RT=$(aws ec2 create-route-table \
+    --vpc-id $VPC_ID \
+    --query 'RouteTable.RouteTableId' \
+    --output text)
+
+PRIVATE_RT=$(aws ec2 create-route-table \
+    --vpc-id $VPC_ID \
+    --query 'RouteTable.RouteTableId' \
+    --output text)
+
+# Create routes
+aws ec2 create-route \
+    --route-table-id $PUBLIC_RT \
+    --destination-cidr-block 0.0.0.0/0 \
+    --gateway-id $IGW_ID
+
+aws ec2 create-route \
+    --route-table-id $PRIVATE_RT \
+    --destination-cidr-block 0.0.0.0/0 \
+    --nat-gateway-id $NAT_GATEWAY_ID
+
+# Associate subnets with route tables
+aws ec2 associate-route-table \
+    --subnet-id $PUBLIC_SUBNET_1 \
+    --route-table-id $PUBLIC_RT
+
+aws ec2 associate-route-table \
+    --subnet-id $PUBLIC_SUBNET_2 \
+    --route-table-id $PUBLIC_RT
+
+aws ec2 associate-route-table \
+    --subnet-id $PRIVATE_SUBNET_1 \
+    --route-table-id $PRIVATE_RT
+
+aws ec2 associate-route-table \
+    --subnet-id $PRIVATE_SUBNET_2 \
+    --route-table-id $PRIVATE_RT
+
+# Create Security Groups
+# ALB Security Group
+ALB_SG=$(aws ec2 create-security-group \
+    --group-name ecs-lamp-alb-sg \
+    --description "Security group for ALB" \
+    --vpc-id $VPC_ID \
+    --query 'GroupId' \
+    --output text)
+
+aws ec2 authorize-security-group-ingress \
+    --group-id $ALB_SG \
+    --protocol tcp \
+    --port 80 \
+    --cidr 0.0.0.0/0
+
+aws ec2 authorize-security-group-ingress \
+    --group-id $ALB_SG \
+    --protocol tcp \
+    --port 443 \
+    --cidr 0.0.0.0/0
+
+# ECS Security Group
+ECS_SG=$(aws ec2 create-security-group \
+    --group-name ecs-lamp-ecs-sg \
+    --description "Security group for ECS tasks" \
+    --vpc-id $VPC_ID \
+    --query 'GroupId' \
+    --output text)
+
+aws ec2 authorize-security-group-ingress \
+    --group-id $ECS_SG \
+    --protocol tcp \
+    --port 80 \
+    --source-group $ALB_SG
+
+aws ec2 authorize-security-group-ingress \
+    --group-id $ECS_SG \
+    --protocol tcp \
+    --port 3306 \
+    --source-group $ECS_SG
+
+# EFS Security Group
+EFS_SG=$(aws ec2 create-security-group \
+    --group-name ecs-lamp-efs-sg \
+    --description "Security group for EFS" \
+    --vpc-id $VPC_ID \
+    --query 'GroupId' \
+    --output text)
+
+aws ec2 authorize-security-group-ingress \
+    --group-id $EFS_SG \
+    --protocol tcp \
+    --port 2049 \
+    --source-group $ECS_SG
 ```
 
-## Phase 7: Load Balancer Setup
+### 3.3 Persistent Storage for MySQL Container
+**Plan**: Create EFS file system for MySQL data persistence, configure EFS mount targets in private subnets, set up EFS security groups, create EFS access points for MySQL data directory
 
+**Implementation**:
+```bash
+# Create EFS file system
+EFS_ID=$(aws efs create-file-system \
+    --creation-token ecs-lamp-mysql-data \
+    --performance-mode generalPurpose \
+    --throughput-mode provisioned \
+    --provisioned-throughput-in-mibps 100 \
+    --query 'FileSystemId' \
+    --output text)
+
+# Create mount targets
+aws efs create-mount-target \
+    --file-system-id $EFS_ID \
+    --subnet-id $PRIVATE_SUBNET_1 \
+    --security-groups $EFS_SG
+
+aws efs create-mount-target \
+    --file-system-id $EFS_ID \
+    --subnet-id $PRIVATE_SUBNET_2 \
+    --security-groups $EFS_SG
+
+# Create access point for MySQL
+EFS_ACCESS_POINT=$(aws efs create-access-point \
+    --file-system-id $EFS_ID \
+    --posix-user Uid=999,Gid=999 \
+    --root-directory Path="/mysql-data",CreationInfo='{OwnerUid=999,OwnerGid=999,Permissions=755}' \
+    --query 'AccessPointId' \
+    --output text)
+```
+
+### 3.4 Load Balancer Configuration
+**Plan**: Create Application Load Balancer (ALB), set up target groups for ECS services, configure health checks
+
+**Implementation**:
 ```bash
 # Create Application Load Balancer
 ALB_ARN=$(aws elbv2 create-load-balancer \
@@ -991,11 +988,39 @@ aws elbv2 create-listener \
     --default-actions Type=forward,TargetGroupArn=$TARGET_GROUP_ARN
 ```
 
-## Phase 8: Task Definitions
+## Phase 4: ECS Cluster & Service Deployment
 
-### 8.1 MySQL Task Definition
+### 4.1 ECS Cluster Setup
+**Plan**: Create ECS Cluster using Fargate launch type, configure cluster settings and networking, set up CloudWatch logging
 
+**Implementation**:
 ```bash
+# Create ECS cluster using AWS CLI
+aws ecs create-cluster --cluster-name $CLUSTER_NAME
+
+# Verify cluster creation
+aws ecs describe-clusters --clusters $CLUSTER_NAME
+```
+
+### 4.2 Task Definitions
+**Plan**: Create task definition for web application and MySQL database with proper resource allocation, environment variables, logging configuration, and volume mounts
+
+**Implementation**:
+```bash
+# Build and push images first
+cd web
+docker build -t ecs-lamp-web .
+docker tag ecs-lamp-web:latest ${ACCOUNT_ID}.dkr.ecr.eu-west-1.amazonaws.com/ecs-lamp-web:latest
+docker push ${ACCOUNT_ID}.dkr.ecr.eu-west-1.amazonaws.com/ecs-lamp-web:latest
+
+cd ../mysql
+docker build -t ecs-lamp-mysql .
+docker tag ecs-lamp-mysql:latest ${ACCOUNT_ID}.dkr.ecr.eu-west-1.amazonaws.com/ecs-lamp-mysql:latest
+docker push ${ACCOUNT_ID}.dkr.ecr.eu-west-1.amazonaws.com/ecs-lamp-mysql:latest
+
+cd ../../
+
+# Create MySQL task definition
 cat > mysql-task-definition.json << EOF
 {
     "family": "ecs-lamp-mysql",
@@ -1003,7 +1028,7 @@ cat > mysql-task-definition.json << EOF
     "requiresCompatibilities": ["FARGATE"],
     "cpu": "512",
     "memory": "1024",
-    "executionRoleArn": "arn:aws:iam::${ACCOUNT_ID}:role/ecsTaskExecutionRole",
+    "executionRoleArn": "arn:aws:iam::${ACCOUNT_ID}:role/ecsLampTaskExecutionRole",
     "containerDefinitions": [
         {
             "name": "mysql",
@@ -1056,11 +1081,8 @@ EOF
 
 # Register MySQL task definition
 aws ecs register-task-definition --cli-input-json file://mysql-task-definition.json
-```
 
-### 8.2 Web Application Task Definition
-
-```bash
+# Create web application task definition
 cat > web-task-definition.json << EOF
 {
     "family": "ecs-lamp-web",
@@ -1068,7 +1090,7 @@ cat > web-task-definition.json << EOF
     "requiresCompatibilities": ["FARGATE"],
     "cpu": "256",
     "memory": "512",
-    "executionRoleArn": "arn:aws:iam::${ACCOUNT_ID}:role/ecsTaskExecutionRole",
+    "executionRoleArn": "arn:aws:iam::${ACCOUNT_ID}:role/ecsLampTaskExecutionRole",
     "containerDefinitions": [
         {
             "name": "web",
@@ -1123,8 +1145,10 @@ EOF
 aws ecs register-task-definition --cli-input-json file://web-task-definition.json
 ```
 
-## Phase 9: Service Discovery
+### 4.3 ECS Services
+**Plan**: Deploy MySQL database service first, deploy web application service, configure service-to-service networking, set up service discovery for database connection, configure service auto-scaling policies
 
+**Implementation**:
 ```bash
 # Create service discovery namespace
 NAMESPACE_ID=$(aws servicediscovery create-private-dns-namespace \
@@ -1149,13 +1173,7 @@ MYSQL_SERVICE_ID=$(aws servicediscovery create-service \
     --health-check-custom-config FailureThreshold=1 \
     --query 'Service.Id' \
     --output text)
-```
 
-## Phase 10: Deploy ECS Services Using AWS CLI
-
-### 10.1 Deploy MySQL Service
-
-```bash
 # Create MySQL service
 aws ecs create-service \
     --cluster $CLUSTER_NAME \
@@ -1168,11 +1186,7 @@ aws ecs create-service \
 
 # Wait for MySQL service to be stable
 aws ecs wait services-stable --cluster $CLUSTER_NAME --services ecs-lamp-mysql-service
-```
 
-### 10.2 Deploy Web Service
-
-```bash
 # Create web service with load balancer integration
 aws ecs create-service \
     --cluster $CLUSTER_NAME \
@@ -1187,35 +1201,18 @@ aws ecs create-service \
 aws ecs wait services-stable --cluster $CLUSTER_NAME --services ecs-lamp-web-service
 ```
 
-### 10.3 Scale Services (if needed)
+## Phase 5: Testing & Optimization
 
+### 5.1 Application Testing
+**Plan**: Test application functionality through ALB, verify database connectivity, test CRUD operations, perform load testing (basic)
+
+**Implementation**:
 ```bash
-# Scale web service to 3 instances
-aws ecs update-service \
-    --cluster $CLUSTER_NAME \
-    --service ecs-lamp-web-service \
-    --desired-count 3
-
-# Wait for scaling to complete
-aws ecs wait services-stable --cluster $CLUSTER_NAME --services ecs-lamp-web-service
-```
-
-## Phase 11: Verification and Testing
-
-### 11.1 Check Service Status
-
-```bash
-# List all tasks in the cluster
+# Check service status
 aws ecs list-tasks --cluster $CLUSTER_NAME
 
 # Get detailed service information
 aws ecs describe-services --cluster $CLUSTER_NAME --services ecs-lamp-mysql-service ecs-lamp-web-service
-
-# Check task status
-aws ecs describe-tasks --cluster $CLUSTER_NAME --tasks $(aws ecs list-tasks --cluster $CLUSTER_NAME --query 'taskArns' --output text)
-
-# Get service status summary
-aws ecs describe-services --cluster $CLUSTER_NAME --services ecs-lamp-web-service --query 'services[0].{ServiceName:serviceName,Status:status,RunningCount:runningCount,DesiredCount:desiredCount}'
 
 # Get ALB DNS name
 ALB_DNS=$(aws elbv2 describe-load-balancers \
@@ -1224,11 +1221,7 @@ ALB_DNS=$(aws elbv2 describe-load-balancers \
     --output text)
 
 echo "Application URL: http://$ALB_DNS"
-```
 
-### 11.2 Test Application
-
-```bash
 # Test health endpoint
 curl http://$ALB_DNS/health.php
 
@@ -1239,8 +1232,10 @@ curl http://$ALB_DNS/
 aws elbv2 describe-target-health --target-group-arn $TARGET_GROUP_ARN
 ```
 
-## Phase 12: Monitoring Setup
+### 5.2 Monitoring & Logging
+**Plan**: Set up CloudWatch dashboards, configure log groups for containers, set up basic alarms for service health
 
+**Implementation**:
 ```bash
 # Create CloudWatch dashboard
 cat > dashboard.json << EOF
@@ -1268,8 +1263,56 @@ aws cloudwatch put-dashboard \
     --dashboard-body file://dashboard.json
 ```
 
-## Phase 13: Cleanup Commands (Optional)
+## Phase 6: Documentation & Submission Preparation
 
+### 6.1 Verification Commands
+**Plan**: Document key ECS commands for cluster management, task definitions, service management, and ECR operations
+
+**Key Commands for ECS and ECR**:
+```bash
+# Cluster Management
+aws ecs create-cluster --cluster-name lamp-cluster
+aws ecs list-clusters
+aws ecs describe-clusters --clusters lamp-cluster
+
+# Task Definitions
+aws ecs register-task-definition --cli-input-json file://task-definition.json
+aws ecs list-task-definitions
+aws ecs describe-task-definition --task-definition lamp-web-app
+
+# Service Management
+aws ecs create-service --cluster lamp-cluster --service-name lamp-web-service
+aws ecs list-services --cluster lamp-cluster
+aws ecs describe-services --cluster lamp-cluster --services lamp-web-service
+
+# ECR Operations
+aws ecr get-login-password --region us-east-1 | docker login --username AWS
+docker build -t lamp-web .
+docker tag lamp-web:latest [account-id].dkr.ecr.us-east-1.amazonaws.com/lamp-web:latest
+docker push [account-id].dkr.ecr.us-east-1.amazonaws.com/lamp-web:latest
+```
+
+### 6.2 Troubleshooting Commands
+```bash
+# Check service status
+aws ecs describe-services --cluster $CLUSTER_NAME --services ecs-lamp-web-service ecs-lamp-mysql-service
+
+# Get task details
+TASK_ARN=$(aws ecs list-tasks --cluster $CLUSTER_NAME --service-name ecs-lamp-web-service --query 'taskArns[0]' --output text)
+aws ecs describe-tasks --cluster $CLUSTER_NAME --tasks $TASK_ARN
+
+# Check task logs
+aws logs describe-log-groups --log-group-name-prefix "/ecs/ecs-lamp"
+
+# View container logs
+TASK_ID=$(echo $TASK_ARN | cut -d'/' -f3)
+aws logs get-log-events \
+    --log-group-name "/ecs/ecs-lamp-web" \
+    --log-stream-name "ecs/web/$TASK_ID" \
+    --start-from-head
+```
+
+### 6.3 Cleanup Commands (Optional)
 ```bash
 # Scale down services to 0
 aws ecs update-service --cluster $CLUSTER_NAME --service ecs-lamp-web-service --desired-count 0
@@ -1290,70 +1333,18 @@ aws elbv2 delete-load-balancer --load-balancer-arn $ALB_ARN
 
 # Delete target group
 aws elbv2 delete-target-group --target-group-arn $TARGET_GROUP_ARN
-
-# Delete EFS
-aws efs delete-mount-target --mount-target-id $(aws efs describe-mount-targets --file-system-id $EFS_ID --query 'MountTargets[0].MountTargetId' --output text)
-aws efs delete-file-system --file-system-id $EFS_ID
-
-# Delete VPC resources (in reverse order)
-aws ec2 delete-nat-gateway --nat-gateway-id $NAT_GATEWAY_ID
-aws ec2 release-address --allocation-id $NAT_ALLOCATION_ID
-aws ec2 delete-subnet --subnet-id $PRIVATE_SUBNET_1
-aws ec2 delete-subnet --subnet-id $PRIVATE_SUBNET_2
-aws ec2 delete-subnet --subnet-id $PUBLIC_SUBNET_1
-aws ec2 delete-subnet --subnet-id $PUBLIC_SUBNET_2
-aws ec2 detach-internet-gateway --internet-gateway-id $IGW_ID --vpc-id $VPC_ID
-aws ec2 delete-internet-gateway --internet-gateway-id $IGW_ID
-aws ec2 delete-vpc --vpc-id $VPC_ID
-```
-
-## Troubleshooting Commands
-
-```bash
-# Check service status
-aws ecs describe-services --cluster $CLUSTER_NAME --services ecs-lamp-web-service ecs-lamp-mysql-service
-
-# Get task details
-TASK_ARN=$(aws ecs list-tasks --cluster $CLUSTER_NAME --service-name ecs-lamp-web-service --query 'taskArns[0]' --output text)
-aws ecs describe-tasks --cluster $CLUSTER_NAME --tasks $TASK_ARN
-
-# Check task logs using AWS CLI
-aws logs describe-log-groups --log-group-name-prefix "/ecs/ecs-lamp"
-
-# Get task definition details
-aws ecs describe-task-definition --task-definition ecs-lamp-web:1
-aws ecs describe-task-definition --task-definition ecs-lamp-mysql:1
-
-# Check service events
-aws ecs describe-services --cluster $CLUSTER_NAME --services ecs-lamp-web-service --query 'services[0].events'
-aws ecs describe-services --cluster $CLUSTER_NAME --services ecs-lamp-mysql-service --query 'services[0].events'
-
-# View container logs
-TASK_ID=$(echo $TASK_ARN | cut -d'/' -f3)
-aws logs get-log-events \
-    --log-group-name "/ecs/ecs-lamp-web" \
-    --log-stream-name "ecs/web/$TASK_ID" \
-    --start-from-head
-
-# View MySQL logs
-MYSQL_TASK_ARN=$(aws ecs list-tasks --cluster $CLUSTER_NAME --service-name ecs-lamp-mysql-service --query 'taskArns[0]' --output text)
-MYSQL_TASK_ID=$(echo $MYSQL_TASK_ARN | cut -d'/' -f3)
-aws logs get-log-events \
-    --log-group-name "/ecs/ecs-lamp-mysql" \
-    --log-stream-name "ecs/mysql/$MYSQL_TASK_ID" \
-    --start-from-head
 ```
 
 ## Success Verification Checklist
 
-- ECS cluster created successfully
-- Task definitions registered
-- Services running with desired count
-- Load balancer health checks passing
-- Application accessible via ALB DNS name
-- Database connectivity working
-- CloudWatch logs being generated
-- All screenshots captured for submission
+- ✅ ECS cluster created successfully
+- ✅ Task definitions registered
+- ✅ Services running with desired count
+- ✅ Load balancer health checks passing
+- ✅ Application accessible via ALB DNS name
+- ✅ Database connectivity working
+- ✅ CloudWatch logs being generated
+- ✅ All screenshots captured for submission
 
 ## Important Notes
 
@@ -1364,4 +1355,3 @@ aws logs get-log-events \
 5. Test the application thoroughly before submission
 6. Keep track of all resource ARNs and IDs for cleanup if needed
 
-This implementation guide provides all the necessary commands and configurations to deploy a LAMP application on ECS using only CLI commands.
