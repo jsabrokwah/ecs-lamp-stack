@@ -923,12 +923,11 @@ aws ec2 authorize-security-group-ingress \
 
 **Implementation**:
 ```bash
-# Create EFS file system
+# Create EFS file system with cost-optimized settings
 EFS_ID=$(aws efs create-file-system \
     --creation-token ecs-lamp-mysql-data \
     --performance-mode generalPurpose \
-    --throughput-mode provisioned \
-    --provisioned-throughput-in-mibps 100 \
+    --throughput-mode bursting \
     --query 'FileSystemId' \
     --output text)
 
