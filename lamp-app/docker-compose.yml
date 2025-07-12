@@ -1,25 +1,30 @@
+# Updated for RDS MySQL - Production uses RDS, local development flexible
 services:
-  mysql:
-    build: ./mysql
-    environment:
-      MYSQL_ROOT_PASSWORD: rootpassword
-      MYSQL_DATABASE: lampdb
-    volumes:
-      - mysql-data:/var/lib/mysql
-    ports:
-      - "3306:3306"
+  # MySQL service removed - using RDS in production
+  # For local development, use external MySQL or uncomment mysql service below
+  
+  # mysql:
+  #   build: ./mysql
+  #   environment:
+  #     MYSQL_ROOT_PASSWORD: rootpassword
+  #     MYSQL_DATABASE: lampdb
+  #   volumes:
+  #     - mysql-data:/var/lib/mysql
+  #   ports:
+  #     - "3306:3306"
 
   web:
     build: ./web
     ports:
       - "80:80"
     environment:
-      DB_HOST: mysql
+      # For local development - point to local MySQL or RDS endpoint
+      DB_HOST: ${DB_HOST:-localhost}
       DB_NAME: lampdb
       DB_USER: root
       DB_PASSWORD: rootpassword
-    depends_on:
-      - mysql
+    # depends_on:
+    #   - mysql
 
-volumes:
-  mysql-data:
+# volumes:
+#   mysql-data:

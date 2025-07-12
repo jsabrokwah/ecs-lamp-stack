@@ -1,0 +1,28 @@
+{
+    "family": "rds-init-task",
+    "networkMode": "awsvpc",
+    "requiresCompatibilities": ["FARGATE"],
+    "cpu": "256",
+    "memory": "512",
+    "executionRoleArn": "arn:aws:iam::288761743948:role/ecsLampTaskExecutionRole",
+    "containerDefinitions": [
+        {
+            "name": "mysql-client",
+            "image": "mysql:8.0",
+            "essential": true,
+            "command": [
+                "sh", "-c",
+                "sleep 10 && mysql -h ecs-lamp-mysql.cdgs4qkmwl1f.eu-west-1.rds.amazonaws.com -u root -prootpassword -e 'CREATE DATABASE IF NOT EXISTS lampdb; USE lampdb; CREATE TABLE IF NOT EXISTS todo (id INT AUTO_INCREMENT PRIMARY KEY, task VARCHAR(255) NOT NULL, status ENUM(\"Pending\",\"In Progress\", \"Completed\") DEFAULT \"Pending\", created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP); INSERT INTO todo (task, status) VALUES (\"Welcome to TaskFlow on RDS!\", \"Completed\"), (\"Test RDS connectivity\", \"In Progress\"), (\"Implement disaster recovery\", \"Pending\");' && echo 'Database initialized successfully'"
+            ],
+            "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                    "awslogs-group": "/ecs/rds-init",
+                    "awslogs-region": "eu-west-1",
+                    "awslogs-stream-prefix": "ecs",
+                    "awslogs-create-group": "true"
+                }
+            }
+        }
+    ]
+}
