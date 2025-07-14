@@ -1,0 +1,22 @@
+# AWS Configuration
+aws_region = "us-east-1"
+
+# Project Configuration
+project_name = "ecs-lamp"
+
+# Network Configuration
+vpc_cidr = "10.0.0.0/16"
+
+# Database Configuration
+db_instance_class = "db.t3.micro"
+db_name          = "lampdb"
+db_username      = "root"
+db_password      = "your-secure-password-here"
+
+# Tags
+tags = {
+  Environment = "dev"
+  Project     = "ecs-lamp-stack"
+  ManagedBy   = "terraform"
+  Owner       = "your-name"
+}
