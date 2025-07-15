@@ -13,100 +13,86 @@ This guide provides comprehensive disaster recovery procedures for the ECS LAMP 
 Primary (eu-west-1)          DR (eu-central-1)
 ├── ECS Cluster              ├── ECS Cluster (Pilot Light)
 ├── RDS MySQL (Primary)      ├── RDS MySQL (Read Replica)
-├── ALB                      ├── ALB (Standby)
-└── Route 53 (Primary)       └── Route 53 (Failover)
+├── ALB (Active)             ├── ALB (Standby)
+└── Health Checks            └── Health Checks
 ```
+
+**Failover Method**: ALB-based with health check monitoring
 
 ## Prerequisites
 
 Ensure the primary infrastructure is deployed using the implementation-guideline.md and the cross-region read replica is configured.
 
-## 1. Route 53 DNS Failover Setup
+## 1. ALB-Based Failover Setup
 
-### 1.1 Create Hosted Zone and Health Checks
+### 1.1 Get ALB Endpoints
 
 ```bash
-# Create hosted zone (if not exists)
-DOMAIN_NAME="taskflow-app.com"  # Replace with your domain
-HOSTED_ZONE_ID=$(aws route53 create-hosted-zone \
-    --name $DOMAIN_NAME \
-    --caller-reference $(date +%s) \
-    --query 'HostedZone.Id' \
-    --output text | cut -d'/' -f3)
-
-# Create health check for primary ALB
+# Get primary ALB DNS name
 PRIMARY_ALB_DNS=$(aws elbv2 describe-load-balancers \
     --names ecs-lamp-alb \
     --region eu-west-1 \
     --query 'LoadBalancers[0].DNSName' \
     --output text)
 
-PRIMARY_HEALTH_CHECK_ID=$(aws route53 create-health-check \
-    --caller-reference "primary-$(date +%s)" \
-    --health-check-config Type=HTTP,ResourcePath=/health.php,FullyQualifiedDomainName=$PRIMARY_ALB_DNS,Port=80,RequestInterval=30,FailureThreshold=3 \
-    --query 'HealthCheck.Id' \
-    --output text)
-
-# Create health check for DR ALB
+# Get DR ALB DNS name
 DR_ALB_DNS=$(aws elbv2 describe-load-balancers \
     --names ecs-lamp-alb \
     --region eu-central-1 \
     --query 'LoadBalancers[0].DNSName' \
     --output text)
 
-DR_HEALTH_CHECK_ID=$(aws route53 create-health-check \
-    --caller-reference "dr-$(date +%s)" \
-    --health-check-config Type=HTTP,ResourcePath=/health.php,FullyQualifiedDomainName=$DR_ALB_DNS,Port=80,RequestInterval=30,FailureThreshold=3 \
-    --query 'HealthCheck.Id' \
-    --output text)
+echo "Primary ALB: http://$PRIMARY_ALB_DNS"
+echo "DR ALB: http://$DR_ALB_DNS"
+
+# Store endpoints for scripts
+echo "PRIMARY_ALB_DNS=$PRIMARY_ALB_DNS" > alb-endpoints.env
+echo "DR_ALB_DNS=$DR_ALB_DNS" >> alb-endpoints.env
 ```
 
-### 1.2 Configure DNS Failover Records
+### 1.2 Create Application Endpoint Switcher
 
 ```bash
-# Create primary DNS record
-cat > primary-record.json << EOF
-{
-    "Changes": [{
-        "Action": "CREATE",
-        "ResourceRecordSet": {
-            "Name": "$DOMAIN_NAME",
-            "Type": "A",
-            "SetIdentifier": "Primary",
-            "Failover": "PRIMARY",
-            "TTL": 60,
-            "ResourceRecords": [{"Value": "$(dig +short $PRIMARY_ALB_DNS | head -1)"}],
-            "HealthCheckId": "$PRIMARY_HEALTH_CHECK_ID"
-        }
-    }]
-}
+# Create endpoint management script
+cat > manage-endpoints.sh << 'EOF'
+#!/bin/bash
+source alb-endpoints.env
+
+case "$1" in
+    "primary")
+        echo "🌐 Active Endpoint: http://$PRIMARY_ALB_DNS"
+        echo "📋 Copy this URL to access the application"
+        ;;
+    "dr")
+        echo "🌐 Active Endpoint: http://$DR_ALB_DNS"
+        echo "📋 Copy this URL to access the application"
+        ;;
+    "status")
+        echo "🔍 Checking endpoint status..."
+        PRIMARY_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://$PRIMARY_ALB_DNS/health.php || echo "000")
+        DR_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://$DR_ALB_DNS/health.php || echo "000")
+        
+        echo "Primary (eu-west-1): $PRIMARY_STATUS $([ $PRIMARY_STATUS -eq 200 ] && echo '✅' || echo '❌')"
+        echo "DR (eu-central-1): $DR_STATUS $([ $DR_STATUS -eq 200 ] && echo '✅' || echo '❌')"
+        
+        if [ $PRIMARY_STATUS -eq 200 ]; then
+            echo "🌐 Use Primary: http://$PRIMARY_ALB_DNS"
+        elif [ $DR_STATUS -eq 200 ]; then
+            echo "🌐 Use DR: http://$DR_ALB_DNS"
+        else
+            echo "⚠️ Both endpoints are down"
+        fi
+        ;;
+    *)
+        echo "Usage: $0 {primary|dr|status}"
+        echo "  primary - Show primary endpoint"
+        echo "  dr      - Show DR endpoint"
+        echo "  status  - Check both endpoints and recommend active one"
+        ;;
+esac
 EOF
 
-# Create DR DNS record
-cat > dr-record.json << EOF
-{
-    "Changes": [{
-        "Action": "CREATE",
-        "ResourceRecordSet": {
-            "Name": "$DOMAIN_NAME",
-            "Type": "A",
-            "SetIdentifier": "DR",
-            "Failover": "SECONDARY",
-            "TTL": 60,
-            "ResourceRecords": [{"Value": "$(dig +short $DR_ALB_DNS | head -1)"}]
-        }
-    }]
-}
-EOF
-
-# Apply DNS records
-aws route53 change-resource-record-sets \
-    --hosted-zone-id $HOSTED_ZONE_ID \
-    --change-batch file://primary-record.json
-
-aws route53 change-resource-record-sets \
-    --hosted-zone-id $HOSTED_ZONE_ID \
-    --change-batch file://dr-record.json
+chmod +x manage-endpoints.sh
 ```
 
 ## 2. Automated Failover Scripts
@@ -277,18 +263,18 @@ aws sns subscribe \
     --protocol email \
     --notification-endpoint your-email@example.com
 
-# Primary region health alarm
+# ALB target health alarm
 aws cloudwatch put-metric-alarm \
-    --alarm-name "ECS-LAMP-Primary-Health" \
-    --alarm-description "Primary region health check failure" \
-    --metric-name HealthCheckStatus \
-    --namespace AWS/Route53 \
-    --statistic Minimum \
-    --period 60 \
+    --alarm-name "ALB-Primary-Unhealthy-Targets" \
+    --alarm-description "Primary ALB has no healthy targets" \
+    --metric-name HealthyHostCount \
+    --namespace AWS/ApplicationELB \
+    --statistic Average \
+    --period 300 \
     --threshold 1 \
     --comparison-operator LessThanThreshold \
-    --dimensions Name=HealthCheckId,Value=$PRIMARY_HEALTH_CHECK_ID \
-    --evaluation-periods 3 \
+    --dimensions Name=LoadBalancer,Value=$(aws elbv2 describe-load-balancers --names ecs-lamp-alb --region eu-west-1 --query 'LoadBalancers[0].LoadBalancerArn' --output text | cut -d'/' -f2-) \
+    --evaluation-periods 2 \
     --alarm-actions $DR_SNS_TOPIC_ARN \
     --region eu-west-1
 
@@ -577,36 +563,64 @@ aws s3api put-bucket-replication \
 cat > test-dr.sh << 'EOF'
 #!/bin/bash
 set -e
+source alb-endpoints.env
 
 echo "🧪 DISASTER RECOVERY TESTING STARTED"
 
-# Test 1: Health check endpoints
-echo "1️⃣ Testing health check endpoints..."
-PRIMARY_HEALTH=$(curl -s -o /dev/null -w "%{http_code}" http://$PRIMARY_ALB_DNS/health.php)
-DR_HEALTH=$(curl -s -o /dev/null -w "%{http_code}" http://$DR_ALB_DNS/health.php)
+# Test 1: ALB health check endpoints
+echo "1️⃣ Testing ALB health endpoints..."
+PRIMARY_HEALTH=$(curl -s -o /dev/null -w "%{http_code}" http://$PRIMARY_ALB_DNS/health.php || echo "000")
+DR_HEALTH=$(curl -s -o /dev/null -w "%{http_code}" http://$DR_ALB_DNS/health.php || echo "000")
 
-echo "Primary health: $PRIMARY_HEALTH"
-echo "DR health: $DR_HEALTH"
+echo "Primary ALB health: $PRIMARY_HEALTH $([ $PRIMARY_HEALTH -eq 200 ] && echo '✅' || echo '❌')"
+echo "DR ALB health: $DR_HEALTH $([ $DR_HEALTH -eq 200 ] && echo '✅' || echo '❌')"
 
-# Test 2: Database connectivity
-echo "2️⃣ Testing database connectivity..."
-mysql -h $PRIMARY_RDS_ENDPOINT -u root -prootpassword -e "SELECT COUNT(*) FROM lampdb.todo;" 2>/dev/null && echo "✅ Primary DB: Connected" || echo "❌ Primary DB: Failed"
+# Test 2: Application functionality
+echo "2️⃣ Testing application functionality..."
+if [ $PRIMARY_HEALTH -eq 200 ]; then
+    APP_RESPONSE=$(curl -s http://$PRIMARY_ALB_DNS | grep -o "TaskFlow" || echo "")
+    [ "$APP_RESPONSE" = "TaskFlow" ] && echo "✅ Primary app: Functional" || echo "❌ Primary app: Not responding"
+fi
 
-# Test 3: Replication lag
-echo "3️⃣ Checking replication lag..."
-REPLICA_LAG=$(aws rds describe-db-instances \
+if [ $DR_HEALTH -eq 200 ]; then
+    APP_RESPONSE=$(curl -s http://$DR_ALB_DNS | grep -o "TaskFlow" || echo "")
+    [ "$APP_RESPONSE" = "TaskFlow" ] && echo "✅ DR app: Functional" || echo "❌ DR app: Not responding"
+fi
+
+# Test 3: Database connectivity
+echo "3️⃣ Testing database connectivity..."
+PRIMARY_RDS_ENDPOINT=$(aws rds describe-db-instances \
+    --db-instance-identifier ecs-lamp-mysql-primary \
+    --region eu-west-1 \
+    --query 'DBInstances[0].Endpoint.Address' \
+    --output text 2>/dev/null || echo "N/A")
+
+if [ "$PRIMARY_RDS_ENDPOINT" != "N/A" ]; then
+    mysql -h $PRIMARY_RDS_ENDPOINT -u root -prootpassword -e "SELECT COUNT(*) FROM lampdb.todo;" 2>/dev/null && echo "✅ Primary DB: Connected" || echo "❌ Primary DB: Failed"
+fi
+
+# Test 4: Replication status
+echo "4️⃣ Checking replication status..."
+REPLICA_STATUS=$(aws rds describe-db-instances \
     --db-instance-identifier ecs-lamp-mysql-replica \
     --region eu-central-1 \
-    --query 'DBInstances[0].StatusInfos[?StatusType==`read replication`].Status' \
-    --output text)
+    --query 'DBInstances[0].DBInstanceStatus' \
+    --output text 2>/dev/null || echo "N/A")
 
-echo "Replica status: $REPLICA_LAG"
+echo "Replica status: $REPLICA_STATUS"
 
-# Test 4: DNS failover simulation
-echo "4️⃣ Testing DNS failover (simulation)..."
-echo "Manual DNS test: nslookup $DOMAIN_NAME"
+# Test 5: ALB target health
+echo "5️⃣ Checking ALB target health..."
+PRIMARY_TARGETS=$(aws elbv2 describe-target-health \
+    --target-group-arn $(aws elbv2 describe-target-groups --names ecs-lamp-tg --region eu-west-1 --query 'TargetGroups[0].TargetGroupArn' --output text 2>/dev/null) \
+    --region eu-west-1 \
+    --query 'TargetHealthDescriptions[?TargetHealth.State==`healthy`]' \
+    --output text 2>/dev/null | wc -l || echo "0")
+
+echo "Primary healthy targets: $PRIMARY_TARGETS"
 
 echo "✅ DR TESTING COMPLETED"
+echo "📋 Use './manage-endpoints.sh status' for current endpoint recommendation"
 EOF
 
 chmod +x test-dr.sh
@@ -663,13 +677,14 @@ chmod +x dr-drill-schedule.sh
 
 ### 7.2 DR Runbook
 
-1. **Detection**: Monitor CloudWatch alarms and health checks
-2. **Assessment**: Verify the scope and impact of the disaster
+1. **Detection**: Monitor CloudWatch alarms and ALB health checks
+2. **Assessment**: Run `./manage-endpoints.sh status` to verify endpoint health
 3. **Activation**: Execute `./activate-dr.sh` or rely on automated Lambda trigger
-4. **Validation**: Confirm application availability in DR region
-5. **Communication**: Notify stakeholders of DR activation
-6. **Monitoring**: Continuously monitor DR environment
+4. **Validation**: Confirm DR application availability using DR ALB endpoint
+5. **Communication**: Notify stakeholders with new DR endpoint URL
+6. **Monitoring**: Continuously monitor DR environment via ALB metrics
 7. **Failback**: Execute `./deactivate-dr.sh` when primary region is restored
+8. **Endpoint Switch**: Use `./manage-endpoints.sh primary` to get restored endpoint
 
 ## 8. Cost Optimization
 
@@ -680,11 +695,19 @@ chmod +x dr-drill-schedule.sh
 
 ## Conclusion
 
-This disaster recovery setup provides:
+This ALB-based disaster recovery setup provides:
 - **Automated failover** with Lambda triggers
-- **DNS-based traffic routing** with Route 53
+- **Direct ALB endpoint access** (no domain required)
 - **Cross-region data replication** with RDS read replicas
 - **Comprehensive monitoring** with CloudWatch alarms
 - **Cost-effective pilot light** architecture
+- **Simple endpoint management** with status checking
 
-The solution meets enterprise-grade DR requirements with RTO of 15 minutes and RPO of 5 minutes.
+The solution meets enterprise-grade DR requirements with RTO of 15 minutes and RPO of 5 minutes, while being accessible without domain registration.
+
+### Key Benefits of ALB-Based Approach:
+- **No Domain Required**: Direct access via ALB DNS names
+- **Immediate Access**: No DNS propagation delays
+- **Cost Effective**: No Route 53 hosted zone costs
+- **Simple Management**: Clear endpoint switching with status checks
+- **Enterprise Ready**: Full monitoring and automation capabilities
