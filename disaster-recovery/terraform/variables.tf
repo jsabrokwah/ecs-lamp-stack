@@ -13,7 +13,13 @@ variable "project_name" {
 variable "vpc_cidr" {
   description = "CIDR block for VPC"
   type        = string
-  default     = "10.0.0.0/16"
+  default     = "10.1.0.0/16"
+}
+
+variable "source_db_identifier" {
+  description = "Source DB identifier for read replica"
+  type        = string
+  default     = "arn:aws:rds:eu-west-1:123456789012:db:ecs-lamp-mysql-primary"
 }
 
 variable "db_instance_class" {

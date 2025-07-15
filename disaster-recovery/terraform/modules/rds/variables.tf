@@ -34,6 +34,11 @@ variable "rds_security_group_id" {
   type        = string
 }
 
+variable "source_db_identifier" {
+  description = "Source DB identifier for read replica"
+  type        = string
+}
+
 variable "tags" {
   description = "A map of tags to assign to the resource"
   type        = map(string)

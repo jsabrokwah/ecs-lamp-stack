@@ -30,12 +30,13 @@ module "security" {
 module "rds" {
   source = "./modules/rds"
   
-  project_name        = var.project_name
-  db_instance_class   = var.db_instance_class
-  db_name            = var.db_name
-  db_username        = var.db_username
-  db_password        = var.db_password
-  private_subnet_ids = module.vpc.private_subnet_ids
+  project_name          = var.project_name
+  db_instance_class     = var.db_instance_class
+  db_name              = var.db_name
+  db_username          = var.db_username
+  db_password          = var.db_password
+  source_db_identifier = var.source_db_identifier
+  private_subnet_ids   = module.vpc.private_subnet_ids
   rds_security_group_id = module.security.rds_security_group_id
   
   tags = var.tags

@@ -55,7 +55,7 @@ This Terraform configuration deploys a modern LAMP stack on AWS using ECS Fargat
    aws ecr get-login-password --region $(terraform output -raw aws_region) | docker login --username AWS --password-stdin $ECR_URL
    
    # Build and push image (from lamp-app directory)
-   cd ../lamp-app/web
+   cd ../../lamp-app/web
    docker build -t ecs-lamp-web .
    docker tag ecs-lamp-web:latest $ECR_URL:latest
    docker push $ECR_URL:latest
