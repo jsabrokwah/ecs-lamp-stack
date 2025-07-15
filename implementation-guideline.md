@@ -917,8 +917,8 @@ EOF
 
 ## RDS MySQL Setup
 
-### 1. Create RDS Infrastructure
-**Plan**: Create a new RDS mysql instance with the following settings (For production):
+### 1. Create Primary RDS Infrastructure
+**Plan**: Create primary RDS MySQL instance in eu-west-1 with cross-region read replica capability
 
 **Implementation**
 ```bash
@@ -928,9 +928,9 @@ aws rds create-db-subnet-group \
     --db-subnet-group-description "Subnet group for ECS LAMP RDS" \
     --subnet-ids $PRIVATE_SUBNET_1 $PRIVATE_SUBNET_2
 
-# Create RDS MySQL Instance
+# Create Primary RDS MySQL Instance (with automated backups for read replica)
 aws rds create-db-instance \
-    --db-instance-identifier ecs-lamp-mysql \
+    --db-instance-identifier ecs-lamp-mysql-primary \
     --db-instance-class db.t3.micro \
     --engine mysql \
     --engine-version 8.0.39 \
@@ -942,20 +942,126 @@ aws rds create-db-instance \
     --db-subnet-group-name ecs-lamp-db-subnet-group \
     --db-name lampdb \
     --backup-retention-period 7 \
+    --backup-window "03:00-04:00" \
     --no-multi-az \
     --storage-encrypted \
     --no-publicly-accessible
 
-# Wait for RDS to be available
-aws rds wait db-instance-available --db-instance-identifier ecs-lamp-mysql
+# Wait for primary RDS to be available
+aws rds wait db-instance-available --db-instance-identifier ecs-lamp-mysql-primary
 
-# Get RDS endpoint
-RDS_ENDPOINT=$(aws rds describe-db-instances \
-    --db-instance-identifier ecs-lamp-mysql \
+# Get primary RDS endpoint
+PRIMARY_RDS_ENDPOINT=$(aws rds describe-db-instances \
+    --db-instance-identifier ecs-lamp-mysql-primary \
     --query 'DBInstances[0].Endpoint.Address' \
     --output text)
 
-echo "RDS Endpoint: $RDS_ENDPOINT"
+echo "Primary RDS Endpoint: $PRIMARY_RDS_ENDPOINT"
+```
+
+### 2. Create Cross-Region Read Replica for Disaster Recovery
+**Plan**: Create read replica in eu-central-1 for disaster recovery
+
+**Implementation**
+```bash
+# Set DR region
+export DR_REGION=eu-central-1
+
+# Create VPC and subnets in DR region (simplified for DR)
+DR_VPC_ID=$(aws ec2 create-vpc \
+    --cidr-block 10.1.0.0/16 \
+    --region $DR_REGION \
+    --query 'Vpc.VpcId' \
+    --output text)
+
+aws ec2 create-tags \
+    --resources $DR_VPC_ID \
+    --tags Key=Name,Value=ecs-lamp-dr-vpc \
+    --region $DR_REGION
+
+# Create private subnets in DR region
+DR_PRIVATE_SUBNET_1=$(aws ec2 create-subnet \
+    --vpc-id $DR_VPC_ID \
+    --cidr-block 10.1.3.0/24 \
+    --availability-zone "${DR_REGION}a" \
+    --region $DR_REGION \
+    --query 'Subnet.SubnetId' \
+    --output text)
+
+DR_PRIVATE_SUBNET_2=$(aws ec2 create-subnet \
+    --vpc-id $DR_VPC_ID \
+    --cidr-block 10.1.4.0/24 \
+    --availability-zone "${DR_REGION}b" \
+    --region $DR_REGION \
+    --query 'Subnet.SubnetId' \
+    --output text)
+
+# Create DR DB Subnet Group
+aws rds create-db-subnet-group \
+    --db-subnet-group-name ecs-lamp-dr-db-subnet-group \
+    --db-subnet-group-description "DR Subnet group for ECS LAMP RDS" \
+    --subnet-ids $DR_PRIVATE_SUBNET_1 $DR_PRIVATE_SUBNET_2 \
+    --region $DR_REGION
+
+# Create security group for DR RDS
+DR_RDS_SG=$(aws ec2 create-security-group \
+    --group-name ecs-lamp-dr-rds-sg \
+    --description "DR Security group for RDS MySQL" \
+    --vpc-id $DR_VPC_ID \
+    --region $DR_REGION \
+    --query 'GroupId' \
+    --output text)
+
+# Create Cross-Region Read Replica
+aws rds create-db-instance-read-replica \
+    --db-instance-identifier ecs-lamp-mysql-replica \
+    --source-db-instance-identifier arn:aws:rds:${AWS_DEFAULT_REGION}:${ACCOUNT_ID}:db:ecs-lamp-mysql-primary \
+    --db-instance-class db.t3.micro \
+    --vpc-security-group-ids $DR_RDS_SG \
+    --db-subnet-group-name ecs-lamp-dr-db-subnet-group \
+    --no-publicly-accessible \
+    --region $DR_REGION \
+    --kms-key-id alias/aws/rds
+
+# Wait for read replica to be available
+aws rds wait db-instance-available \
+    --db-instance-identifier ecs-lamp-mysql-replica \
+    --region $DR_REGION
+
+# Get read replica endpoint
+REPLICA_RDS_ENDPOINT=$(aws rds describe-db-instances \
+    --db-instance-identifier ecs-lamp-mysql-replica \
+    --region $DR_REGION \
+    --query 'DBInstances[0].Endpoint.Address' \
+    --output text)
+
+echo "DR Read Replica Endpoint: $REPLICA_RDS_ENDPOINT"
+```
+
+### 3. Monitor Replication Lag
+**Plan**: Set up monitoring for replication lag to ensure data consistency
+
+**Implementation**
+```bash
+# Create CloudWatch alarm for replication lag
+aws cloudwatch put-metric-alarm \
+    --alarm-name "RDS-ReadReplica-Lag" \
+    --alarm-description "Monitor RDS read replica lag" \
+    --metric-name ReplicaLag \
+    --namespace AWS/RDS \
+    --statistic Average \
+    --period 300 \
+    --threshold 300 \
+    --comparison-operator GreaterThanThreshold \
+    --dimensions Name=DBInstanceIdentifier,Value=ecs-lamp-mysql-replica \
+    --evaluation-periods 2 \
+    --region $DR_REGION
+
+# Check replication status
+aws rds describe-db-instances \
+    --db-instance-identifier ecs-lamp-mysql-replica \
+    --region $DR_REGION \
+    --query 'DBInstances[0].StatusInfos'
 ```
 
 ### 2. Initialize RDS Database
@@ -977,7 +1083,7 @@ cat > init-rds-task.json << EOF
             "essential": true,
             "command": [
                 "sh", "-c",
-                "sleep 10 && mysql -h $RDS_ENDPOINT -u root -prootpassword -e 'CREATE DATABASE IF NOT EXISTS lampdb; USE lampdb; CREATE TABLE IF NOT EXISTS todo (id INT AUTO_INCREMENT PRIMARY KEY, task VARCHAR(255) NOT NULL, status ENUM(\"Pending\",\"In Progress\", \"Completed\") DEFAULT \"Pending\", created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP); INSERT INTO todo (task, status) VALUES (\"Welcome to TaskFlow on RDS!\", \"Completed\"), (\"Test RDS connectivity\", \"In Progress\"), (\"Implement disaster recovery\", \"Pending\");' && echo 'Database initialized successfully'"
+                "sleep 10 && mysql -h $PRIMARY_RDS_ENDPOINT -u root -prootpassword -e 'CREATE DATABASE IF NOT EXISTS lampdb; USE lampdb; CREATE TABLE IF NOT EXISTS todo (id INT AUTO_INCREMENT PRIMARY KEY, task VARCHAR(255) NOT NULL, status ENUM(\"Pending\",\"In Progress\", \"Completed\") DEFAULT \"Pending\", created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP); INSERT INTO todo (task, status) VALUES (\"Welcome to TaskFlow on RDS!\", \"Completed\"), (\"Test RDS connectivity\", \"In Progress\"), (\"Implement disaster recovery\", \"Pending\");' && echo 'Database initialized successfully'"
             ],
             "logConfiguration": {
                 "logDriver": "awslogs",
@@ -1094,7 +1200,7 @@ cat > web-task-definition.json << EOF
             "environment": [
                 {
                     "name": "DB_HOST",
-                    "value": "$RDS_ENDPOINT"
+                    "value": "$PRIMARY_RDS_ENDPOINT"
                 },
                 {
                     "name": "DB_NAME",
