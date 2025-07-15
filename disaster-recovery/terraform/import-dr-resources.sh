@@ -19,10 +19,10 @@ echo "DR_PRIVATE_SUBNET_2=subnet-xxxxxxxxx"
 echo "DR_RDS_SG=sg-xxxxxxxxx"
 
 # Uncomment and update these lines with actual resource IDs:
-DR_VPC_ID="vpc-0a545c74ef9f4315d"
-DR_PRIVATE_SUBNET_1="subnet-03ff55c17503ea02b"
-DR_PRIVATE_SUBNET_2="subnet-0997ff1c048b17364" 
-DR_RDS_SG="sg-0a9552eb9382a31c1"
+DR_VPC_ID="vpc-xxxxxxxxx"
+DR_PRIVATE_SUBNET_1="subnet-xxxxxxxxx"
+DR_PRIVATE_SUBNET_2="subnet-xxxxxxxxx" 
+DR_RDS_SG="sg-xxxxxxxxx"
 
 # Import only the resources created by AWS CLI
 echo "Importing VPC..."

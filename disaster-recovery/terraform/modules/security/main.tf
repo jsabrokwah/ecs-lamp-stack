@@ -54,11 +54,15 @@ resource "aws_security_group" "rds" {
   description = "DR Security group for RDS MySQL"
   vpc_id      = var.vpc_id
 
+  ingress {
+    description = "MySQL from VPC"
+    from_port   = 3306
+    to_port     = 3306
+    protocol    = "tcp"
+    cidr_blocks = ["10.1.0.0/16"]
+  }
+
   tags = merge(var.tags, {
     Name = "ecs-lamp-dr-rds-sg"
   })
-
-  lifecycle {
-    ignore_changes = [ingress, egress]
-  }
 }
