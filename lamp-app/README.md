@@ -49,6 +49,17 @@ For local development, you can:
 1. Use the docker-compose.yml with local MySQL container
 2. Connect to a development RDS instance
 3. Set environment variables to point to your preferred database
+4. Test DR scenarios using the cross-region RDS read replica
+
+### DR Testing
+To test disaster recovery scenarios locally:
+```bash
+# Test primary region connectivity
+docker run --rm -e DB_HOST=primary-rds-endpoint ecs-lamp-web
+
+# Test DR region connectivity
+docker run --rm -e DB_HOST=dr-rds-endpoint ecs-lamp-web
+```
 
 ## Migration Impact
 
@@ -59,6 +70,8 @@ For local development, you can:
 - **Added**: RDS MySQL instance configuration
 - **Updated**: Web application database connection to use RDS endpoint
 - **Enhanced**: Monitoring with RDS-specific CloudWatch metrics
+- **Added**: Cross-region disaster recovery capabilities
+- **Added**: Automated failover and monitoring systems
 
 ### What Stayed the Same
 - Web container architecture and configuration
@@ -66,3 +79,33 @@ For local development, you can:
 - Apache server configuration
 - Health check endpoints
 - Load balancer integration
+
+## Disaster Recovery Integration
+
+### Cross-Region Deployment
+The web application is now deployed in both regions for disaster recovery:
+- **Primary Region**: eu-west-1 (active)
+- **DR Region**: eu-central-1 (pilot light)
+
+### Database Connectivity
+The application automatically connects to the appropriate RDS endpoint:
+- **Primary**: RDS MySQL primary instance in eu-west-1
+- **DR**: RDS MySQL read replica (promoted to primary during failover) in eu-central-1
+
+### Environment Configuration
+Environment variables are dynamically configured based on deployment region:
+```bash
+# Primary region configuration
+DB_HOST=ecs-lamp-mysql-primary.region.rds.amazonaws.com
+
+# DR region configuration (after failover)
+DB_HOST=ecs-lamp-mysql-replica.region.rds.amazonaws.com
+```
+
+### Health Check Enhancement
+The health check endpoint (`health.php`) validates both:
+- Application server status
+- Database connectivity
+- Regional deployment status
+
+This enables ALB-based failover monitoring and automated disaster detection.

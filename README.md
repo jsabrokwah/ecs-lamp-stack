@@ -4,9 +4,13 @@
 
 This project demonstrates a modern, scalable LAMP (Linux, Apache, MySQL, PHP) stack application deployed on AWS ECS (Elastic Container Service) using **AWS RDS MySQL** for the database layer. The project showcases a **strategic migration from containerized MySQL with EFS storage to managed RDS MySQL**, significantly improving disaster recovery capabilities, operational efficiency, and scalability.
 
-## Live Application
+## Live Primary Application
 
 The TaskFlow application is accessible at: [http://ecs-lamp-alb-1493132989.eu-west-1.elb.amazonaws.com](http://ecs-lamp-alb-1493132989.eu-west-1.elb.amazonaws.com/)
+
+## Live Disaster Recovery URL
+
+The Disaster Recovery Test URL is accessible at: [http://ecs-lamp-dr-alb-1462511445.eu-central-1.elb.amazonaws.com/](http://ecs-lamp-dr-alb-1462511445.eu-central-1.elb.amazonaws.com/)
 
 ## Architecture Evolution: Why We Migrated to RDS
 
@@ -56,7 +60,19 @@ The TaskFlow application is accessible at: [http://ecs-lamp-alb-1493132989.eu-we
 ecs_lamp-stack/
 ├── README.md                    # This documentation
 ├── implementation-guideline.md  # Complete deployment guide
-├── phase2.md                   # Disaster recovery strategy
+├── sprint2.md                  # Disaster recovery requirements
+├── disaster-recovery/          # DR implementation (NEW)
+│   ├── disaster-recovery-guide.md  # Complete DR procedures
+│   └── terraform/              # Infrastructure as Code
+│       ├── README.md          # Terraform deployment guide
+│       ├── main.tf            # Main infrastructure configuration
+│       ├── modules/           # Reusable Terraform modules
+│       │   ├── vpc/           # VPC and networking
+│       │   ├── security/      # Security groups
+│       │   ├── rds/           # RDS with cross-region replica
+│       │   ├── ecr/           # Container registry
+│       │   └── ecs/           # ECS cluster and services
+│       └── terraform.tfvars   # Configuration variables
 ├── lamp-app/
 │   ├── README.md              # Application structure documentation
 │   ├── docker-compose.yml     # Local development setup
@@ -71,7 +87,8 @@ ecs_lamp-stack/
 │   │       └── health.php    # Health check endpoint
 │   └── mysql/                # Legacy MySQL container files (reference only)
 ├── screenshots/              # Implementation screenshots
-└── architectural-diagram.png # Architecture visualization
+├── architectural-diagram.png # Primary architecture visualization
+└── DR-architecture.png      # Disaster recovery architecture (NEW)
 ```
 
 ## Migration Impact and Benefits
@@ -123,25 +140,71 @@ ecs_lamp-stack/
 - **Database Logs**: RDS slow query and error logs
 - **Load Balancer Logs**: Access and error logging
 
-## Disaster Recovery Strategy (Phase 2 Ready)
+## Disaster Recovery Implementation (Phase 2 Complete)
 
-The migration to RDS enables comprehensive disaster recovery:
+**Status**: ✅ **IMPLEMENTED** - Full disaster recovery solution deployed
 
-1. **Cross-Region Read Replica**: Automated data replication
-2. **ECS Service Replication**: Portable task definitions
-3. **Infrastructure as Code**: Reproducible deployments
-4. **Automated Failover**: DNS-based traffic routing
-5. **Recovery Testing**: Regular DR drills and validation
+**Primary Region**: eu-west-1 | **DR Region**: eu-central-1
+
+### Implemented DR Components
+
+1. **Cross-Region RDS Read Replica**: 
+   - Automated data replication from eu-west-1 to eu-central-1
+   - Continuous synchronization with < 5 minutes RPO
+   - Automated promotion capability for failover
+
+2. **Pilot Light ECS Infrastructure**:
+   - Complete ECS cluster deployed in DR region
+   - Services scaled to 0 for cost optimization
+   - Instant scaling capability during disaster
+
+3. **ALB-Based Failover Architecture**:
+   - Direct ALB endpoint access (no domain required)
+   - Primary: `http://ecs-lamp-alb-1493132989.eu-west-1.elb.amazonaws.com`
+   - DR: Available on-demand via ALB endpoint in eu-central-1
+
+4. **Automated Monitoring & Alerting**:
+   - CloudWatch alarms for disaster detection
+   - SNS notifications for DR events
+   - Lambda-based automated failover triggers
+
+5. **Infrastructure as Code**:
+   - Complete Terraform modules for reproducible deployments
+   - Automated resource provisioning in both regions
+   - Version-controlled DR procedures
+
+### DR Capabilities Achieved
+
+- **RTO (Recovery Time Objective)**: 15 minutes
+- **RPO (Recovery Point Objective)**: 5 minutes
+- **Automated Failover**: Lambda-triggered disaster response
+- **Cost Optimization**: Pilot light architecture with minimal standby costs
+- **Endpoint Management**: Simple ALB-based switching without DNS complexity
 
 ## Getting Started
 
+### Primary Infrastructure Deployment
 For complete deployment instructions, see [implementation-guideline.md](implementation-guideline.md)
 
+### Disaster Recovery Setup
+For DR implementation, see [disaster-recovery/disaster-recovery-guide.md](disaster-recovery/disaster-recovery-guide.md)
+
+### Terraform Deployment (Recommended)
+For Infrastructure as Code deployment:
+```bash
+cd disaster-recovery/terraform/
+terraform init
+terraform plan
+terraform apply
+```
+
 ### Quick Start
-1. **Prerequisites**: AWS CLI, Docker, appropriate IAM permissions
-2. **Infrastructure**: Deploy VPC, RDS, ECS cluster
-3. **Application**: Build and deploy web container
-4. **Verification**: Test application functionality
+1. **Prerequisites**: AWS CLI, Terraform, Docker, appropriate IAM permissions
+2. **Primary Infrastructure**: Deploy VPC, RDS, ECS cluster in eu-west-1
+3. **DR Infrastructure**: Deploy cross-region replica and pilot light in eu-central-1
+4. **Application**: Build and deploy web container to both regions
+5. **Verification**: Test application functionality and DR procedures
+6. **Monitoring**: Configure CloudWatch alarms and SNS notifications
 
 ## Migration Lessons Learned
 
@@ -157,13 +220,21 @@ For complete deployment instructions, see [implementation-guideline.md](implemen
 - **Monitoring**: Comprehensive observability from day one
 - **Documentation**: Detailed implementation and migration guides
 
+## Implemented Enhancements
+
+- ✅ **Cross-Region DR**: Complete disaster recovery with RDS read replica
+- ✅ **Infrastructure as Code**: Terraform modules for reproducible deployments
+- ✅ **Automated Monitoring**: CloudWatch alarms and Lambda-based failover
+- ✅ **Pilot Light Architecture**: Cost-optimized standby infrastructure
+- ✅ **ALB-Based Failover**: Direct endpoint switching without DNS complexity
+
 ## Future Enhancements
 
-- **Multi-AZ RDS**: High availability configuration
-- **Read Replicas**: Performance optimization for read-heavy workloads
-- **Auto Scaling**: Dynamic ECS service scaling
-- **CI/CD Pipeline**: Automated deployment pipeline
-- **SSL/TLS**: HTTPS termination at ALB
+- **Multi-AZ RDS**: High availability configuration within regions
+- **Auto Scaling**: Dynamic ECS service scaling based on metrics
+- **CI/CD Pipeline**: Automated deployment pipeline with DR integration
+- **SSL/TLS**: HTTPS termination at ALB with certificate management
+- **Enhanced Monitoring**: Custom dashboards and advanced alerting
 
 ## Conclusion
 
